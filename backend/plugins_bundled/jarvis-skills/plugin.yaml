@@ -1,0 +1,9 @@
+name: Skill Loader
+slug: jarvis-skills
+version: 1.0.0
+description: Loads full SKILL.md instructions from the active Second Brain on demand.
+enabled: true
+min_mode: readonly
+tools:
+  - use_skill
+hooks: []

@@ -1,0 +1,9 @@
+name: Date and Time
+slug: datetime-now
+version: 1.0.0
+description: Returns the exact current local and UTC date/time.
+enabled: true
+min_mode: readonly
+tools:
+  - jarvis_now
+hooks: []

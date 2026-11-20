@@ -1,0 +1,9 @@
+name: Shell Command Runner
+slug: jarvis-shell
+version: 1.0.0
+description: Run one fenced shell command inside the active brain directory (requires Full permission mode).
+enabled: true
+min_mode: full
+tools:
+  - run_command
+hooks: []

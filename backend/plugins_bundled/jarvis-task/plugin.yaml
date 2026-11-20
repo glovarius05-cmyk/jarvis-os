@@ -1,0 +1,9 @@
+name: Kanban Tasks
+slug: jarvis-task
+version: 1.0.0
+description: Queue, list, answer, accept, or cancel autonomous Kanban background tasks from any engine.
+enabled: true
+min_mode: safe
+tools:
+  - jarvis_task
+hooks: []

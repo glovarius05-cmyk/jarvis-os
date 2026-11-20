@@ -1,0 +1,111 @@
+{
+  "version": "1.0",
+  "connectors": [
+    {
+      "id": "github",
+      "name": "GitHub MCP",
+      "description": "Read issues, PRs, repositories, and optionally open PRs or comments.",
+      "transport": "http",
+      "default_url": "https://api.githubcopilot.com/mcp/",
+      "default_perm": "readonly",
+      "write_tools": ["create_*", "update_*", "delete_*", "merge_*", "push_*"]
+    },
+    {
+      "id": "puppeteer",
+      "name": "Puppeteer Web Browser",
+      "description": "Headless Chrome for full JavaScript rendering, SPA navigation, and screenshots.",
+      "transport": "stdio",
+      "default_command": "npx",
+      "default_args": ["-y", "@modelcontextprotocol/server-puppeteer"],
+      "default_perm": "safe",
+      "write_tools": ["click", "fill", "select", "hover", "evaluate"]
+    },
+    {
+      "id": "git",
+      "name": "Local Git Repository",
+      "description": "Read and manage Git repositories: diffs, commit logs, branches, and staged files.",
+      "transport": "stdio",
+      "default_command": "npx",
+      "default_args": ["-y", "@modelcontextprotocol/server-git", "--repository", "/path/to/repo"],
+      "default_perm": "readonly",
+      "write_tools": ["git_commit", "git_push", "git_checkout", "git_branch", "git_reset", "git_merge"]
+    },
+    {
+      "id": "sqlite",
+      "name": "SQLite Data Explorer",
+      "description": "Query and explore SQLite databases, analyze tabular data, and run read-only SQL queries.",
+      "transport": "stdio",
+      "default_command": "npx",
+      "default_args": ["-y", "@modelcontextprotocol/server-sqlite", "--db-path", "/path/to/database.db"],
+      "default_perm": "readonly",
+      "write_tools": ["execute_*", "create_*", "drop_*", "insert_*", "update_*", "delete_*"]
+    },
+    {
+      "id": "google-workspace",
+      "name": "Google Workspace & Calendar",
+      "description": "Access Google Calendar events, Gmail messages, and Drive documents via Composio MCP.",
+      "transport": "http",
+      "default_url": "https://connect.composio.dev/mcp",
+      "default_perm": "readonly",
+      "write_tools": ["*_create_*", "*_update_*", "*_delete_*", "*_send_*"]
+    },
+    {
+      "id": "docker",
+      "name": "Docker Management",
+      "description": "Inspect running containers, stream container logs, and inspect images safely.",
+      "transport": "stdio",
+      "default_command": "npx",
+      "default_args": ["-y", "@modelcontextprotocol/server-docker"],
+      "default_perm": "readonly",
+      "write_tools": ["docker_run", "docker_stop", "docker_restart", "docker_rm", "docker_build"]
+    },
+    {
+      "id": "brave-search",
+      "name": "Brave Search MCP",
+      "description": "Private, independent web and news search engine for up-to-date real-time research.",
+      "transport": "stdio",
+      "default_command": "npx",
+      "default_args": ["-y", "@modelcontextprotocol/server-brave-search"],
+      "default_perm": "readonly",
+      "write_tools": []
+    },
+    {
+      "id": "filesystem",
+      "name": "Local Filesystem MCP",
+      "description": "Expose an extra local directory over stdio MCP.",
+      "transport": "stdio",
+      "default_command": "npx",
+      "default_args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/dir"],
+      "default_perm": "readonly",
+      "write_tools": ["write_*", "edit_*", "move_*", "delete_*", "create_*"]
+    },
+    {
+      "id": "postgres-ro",
+      "name": "PostgreSQL Read-Only",
+      "description": "Query a PostgreSQL database safely in read-only mode.",
+      "transport": "stdio",
+      "default_command": "npx",
+      "default_args": ["-y", "@modelcontextprotocol/server-postgres", "postgresql://..."],
+      "default_perm": "readonly",
+      "write_tools": []
+    },
+    {
+      "id": "custom-http",
+      "name": "Custom HTTP MCP Server",
+      "description": "Connect any remote or local MCP server speaking JSON-RPC over HTTP.",
+      "transport": "http",
+      "default_url": "http://127.0.0.1:8080/mcp",
+      "default_perm": "readonly",
+      "write_tools": ["create_*", "update_*", "delete_*", "send_*", "post_*", "pay_*"]
+    },
+    {
+      "id": "composio-mcp",
+      "name": "Composio Remote MCP",
+      "description": "Unified MCP connection to 250+ SaaS tools and social networks via Composio.",
+      "transport": "http",
+      "default_url": "https://connect.composio.dev/mcp",
+      "default_perm": "readonly",
+      "write_tools": ["*_create_*", "*_post_*", "*_publish_*", "*_delete_*", "*_send_*", "*_upload_*"]
+    }
+  ]
+}

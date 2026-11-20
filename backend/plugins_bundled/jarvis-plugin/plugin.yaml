@@ -1,0 +1,9 @@
+name: Plugin Manager
+slug: jarvis-plugin
+version: 1.0.0
+description: List, inspect, or safely author user Python plugins (always saved with enabled=false).
+enabled: true
+min_mode: safe
+tools:
+  - jarvis_plugin
+hooks: []

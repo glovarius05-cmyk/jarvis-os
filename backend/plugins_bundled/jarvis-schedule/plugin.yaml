@@ -1,0 +1,9 @@
+name: Schedule and Loops
+slug: jarvis-schedule
+version: 1.0.0
+description: Create and manage cron reminders and repeating background loops from any engine.
+enabled: true
+min_mode: safe
+tools:
+  - jarvis_schedule
+hooks: []

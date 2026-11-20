@@ -1,0 +1,25 @@
+services:
+  jarvis:
+    build: .
+    container_name: jarvis-os
+    restart: unless-stopped
+    ports:
+      - "${JARVIS_HOST_PORT:-7777}:7777"
+    environment:
+      JARVIS_HOST: "0.0.0.0"
+      JARVIS_PORT: "7777"
+      JARVIS_STATE_DIR: "/data/state"
+      JARVIS_BRAINS_DIR: "/brains"
+      JARVIS_ALLOWED_HOSTS: "${JARVIS_ALLOWED_HOSTS:-localhost,127.0.0.1}"
+      JARVIS_ADMIN_USER: "${JARVIS_ADMIN_USER:-}"
+      JARVIS_ADMIN_PASSWORD: "${JARVIS_ADMIN_PASSWORD:-}"
+    volumes:
+      - jarvis_state:/data/state
+      - jarvis_brains:/brains
+    extra_hosts:
+      # Lets the container reach local Llama (Ollama) running on the host machine
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  jarvis_state:
+  jarvis_brains:
