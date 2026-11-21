@@ -14,7 +14,6 @@ __pycache__/
 
 # Frontend / Node
 dashboard/node_modules/
-dashboard/dist/
 *.log
 
 # OS / IDE
