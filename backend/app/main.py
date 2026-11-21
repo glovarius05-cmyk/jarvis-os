@@ -29,6 +29,7 @@ from app.api.routes import (
     settings,
     studio,
     terminal_webhooks,
+    v1_compat,
     work,
 )
 from app.container import AppContainer
@@ -104,6 +105,7 @@ def create_app(container: AppContainer | None = None, *, enable_scheduler: bool 
     application.include_router(experience.router)
     application.include_router(channels.router)
     application.include_router(terminal_webhooks.router)
+    application.include_router(v1_compat.router)
 
     @application.get("/robots.txt", response_class=PlainTextResponse)
     def robots_txt() -> str:

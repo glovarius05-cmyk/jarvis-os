@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
+import time
 
 import httpx
 import pytest
@@ -282,4 +284,77 @@ async def test_local_llama_num_ctx_and_mcp_filtering() -> None:
     # 3. Streamed result is received cleanly
     assert events[-1].type == "final"
     assert events[-1].content == "Привет"
+
+
+@pytest.mark.asyncio
+async def test_concurrent_tool_execution_parallel_speedup() -> None:
+    turn = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal turn
+        turn += 1
+        if turn == 1:
+            chunk = {
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "id": "c1",
+                                    "function": {"name": "sleep_tool", "arguments": json.dumps({"tag": "A"})},
+                                },
+                                {
+                                    "index": 1,
+                                    "id": "c2",
+                                    "function": {"name": "sleep_tool", "arguments": json.dumps({"tag": "B"})},
+                                },
+                            ]
+                        }
+                    }
+                ]
+            }
+            body = f"data: {json.dumps(chunk)}\n\ndata: [DONE]\n\n"
+            return httpx.Response(200, content=body.encode(), headers={"content-type": "text/event-stream"})
+
+        chunk2 = {"choices": [{"delta": {"content": "Both finished"}}]}
+        body2 = f"data: {json.dumps(chunk2)}\n\ndata: [DONE]\n\n"
+        return httpx.Response(200, content=body2.encode(), headers={"content-type": "text/event-stream"})
+
+    engine = OpenAICompatEngine(
+        provider_id="openrouter",
+        base_url="https://openrouter.ai/api/v1",
+        api_key="mock",
+        transport=httpx.MockTransport(handler),
+    )
+
+    async def exec_tool(name: str, args: dict) -> str:
+        await asyncio.sleep(0.08)
+        return f"done_{args.get('tag')}"
+
+    req = EngineRequest(
+        session_id="s_parallel",
+        brain="Brain Default",
+        system_prompt="You are Jarvis.",
+        messages=[{"role": "user", "content": "Run both"}],
+        provider="openrouter",
+        model="openrouter/auto",
+        tools=[{"name": "sleep_tool", "description": "Sleep", "parameters": {}}],
+        tool_executor=exec_tool,
+    )
+
+    t0 = time.perf_counter()
+    events = [ev async for ev in engine.stream(req)]
+    elapsed = time.perf_counter() - t0
+
+    tool_calls = [ev for ev in events if ev.type == "tool_call"]
+    tool_results = [ev for ev in events if ev.type == "tool_result"]
+
+    assert len(tool_calls) == 2
+    assert len(tool_results) == 2
+    assert events[-1].type == "final"
+    assert events[-1].content == "Both finished"
+    # If sequential, 2 * 0.08s = 0.16s+. Because it's concurrent, elapsed should be well below 0.15s.
+    assert elapsed < 0.15
+
 

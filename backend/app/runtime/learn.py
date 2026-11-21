@@ -21,6 +21,8 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from app.brain.git_sync import GitBrain
 from app.brain.vault import VaultManager, safe_resolve
 from app.engines.base import EngineProtocol, EngineRequest
@@ -367,5 +369,58 @@ class SelfLearningEngine:
             "promoted_facts": promoted_facts,
             "promoted_wiki": promoted_wiki,
             "rejected": rejected,
+            "commit_sha": commit_sha,
+        }
+
+    def synthesize_skill(
+        self,
+        *,
+        brain: str,
+        name: str,
+        slug: str,
+        description: str,
+        instructions: str,
+        group: str = "Synthesized",
+    ) -> dict[str, Any]:
+        """Autonomously synthesize or refine an executable Agent Skill with security gates."""
+        norm_slug = _SLUG_RE.sub("-", (slug or name or "").strip().lower()).strip("-")
+        norm_slug = norm_slug[:48] or "custom-skill"
+
+        clean_desc = (description or "").strip()[:150]
+        if not clean_desc:
+            return {"ok": False, "error": "Description cannot be empty"}
+
+        # Security check: secrets and injection
+        combined = f"{name}\n{description}\n{instructions}"
+        if contains_secret(combined):
+            return {"ok": False, "error": "Skill contains apparent secrets or API tokens"}
+        if contains_injection(combined):
+            return {"ok": False, "error": "Skill contains prompt injection patterns"}
+
+        root = self._vaults.brain_path(brain)
+        target = safe_resolve(root, f"skills/{norm_slug}/SKILL.md")
+        target.parent.mkdir(parents=True, exist_ok=True)
+
+        meta = {
+            "name": name.strip(),
+            "description": clean_desc,
+            "group": group.strip(),
+            "enabled": True,
+        }
+        yaml_front = yaml.safe_dump(meta, sort_keys=False, allow_unicode=True).strip()
+        body = f"---\n{yaml_front}\n---\n\n{instructions.strip()}\n"
+        target.write_text(body, encoding="utf-8")
+
+        commit_sha = GitBrain.commit_all(
+            root,
+            f"feat(skills): autonomously synthesized skill '{norm_slug}'",
+        )
+
+        return {
+            "ok": True,
+            "slug": norm_slug,
+            "name": name,
+            "description": clean_desc,
+            "path": f"skills/{norm_slug}/SKILL.md",
             "commit_sha": commit_sha,
         }

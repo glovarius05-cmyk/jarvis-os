@@ -150,6 +150,7 @@ class AppContainer:
         )
         hub.register_tool_provider(plugin_host.get_tools)
         hub.set_hook_runner(plugin_host.fire_hooks)
+        hub.set_skills_store(skill_store)
 
         core_memory = CoreMemoryManager(vault_manager)
         plugin_services["core_memory"] = core_memory

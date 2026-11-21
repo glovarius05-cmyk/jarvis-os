@@ -270,6 +270,8 @@ class EngineRouter:
         run_mode: str = "full",
         model: str = "",
     ) -> EngineProtocol:
+        if getattr(self, "_engine_override", None) is not None:
+            return self._engine_override
         cfg = self._settings.load()
 
         if run_mode in {"consensus", "debate"}:

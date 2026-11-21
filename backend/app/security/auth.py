@@ -216,6 +216,17 @@ class AuthManager:
             if isinstance(meta, dict) and float(meta.get("expires_at", 0)) > now
         }
 
+    def verify_admin_password(self, password: str) -> bool:
+        """Verify an admin password directly (for HTTP Bearer token authentication)."""
+        if not password:
+            return False
+        with self._lock:
+            data = self._load_json(self._auth_path)
+            stored_hash = data.get("password_hash", "")
+            if not stored_hash:
+                return False
+            return _verify_password(password, stored_hash)
+
     def validate_session(self, token: str | None) -> str | None:
         if not token:
             return None

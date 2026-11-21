@@ -237,6 +237,7 @@ class OpenAICompatEngine:
                     }
                 )
 
+                parsed_calls = []
                 for idx, tc in enumerate(ordered_calls):
                     call_id = tc.get("id") or f"call_{_round}_{idx}"
                     tool_name = tc["function"]["name"]
@@ -247,7 +248,7 @@ class OpenAICompatEngine:
                             parsed_args = {"value": parsed_args}
                     except json.JSONDecodeError:
                         parsed_args = {"_raw": raw_args}
-
+                    parsed_calls.append((idx, call_id, tool_name, parsed_args))
                     yield EngineEvent(
                         type="tool_call",
                         tool_name=tool_name,
@@ -256,14 +257,16 @@ class OpenAICompatEngine:
                         provider=self._provider_id,
                         model=request.model,
                     )
+
+                if len(parsed_calls) == 1:
+                    _, call_id, tool_name, parsed_args = parsed_calls[0]
                     try:
                         result_text = await request.tool_executor(tool_name, parsed_args)
                     except Exception as exc:  # noqa: BLE001
                         result_text = f"ERROR: {exc}"
-
                     yield EngineEvent(
                         type="tool_result",
-                        content=result_text[:1000],
+                        content=str(result_text)[:1000],
                         tool_name=tool_name,
                         tool_call_id=call_id,
                         provider=self._provider_id,
@@ -273,9 +276,49 @@ class OpenAICompatEngine:
                         {
                             "role": "tool",
                             "tool_call_id": call_id,
-                            "content": result_text,
+                            "content": str(result_text),
                         }
                     )
+                else:
+                    # Hermes-style concurrent tool execution (up to 8 parallel workers)
+                    concurrency_sem = asyncio.Semaphore(8)
+
+                    async def _exec_call(c_idx: int, c_id: str, c_name: str, c_args: dict[str, Any]) -> tuple[int, str, str, str]:
+                        async with concurrency_sem:
+                            try:
+                                res = await request.tool_executor(c_name, c_args)
+                            except Exception as exc:  # noqa: BLE001
+                                res = f"ERROR: {exc}"
+                        return c_idx, c_id, c_name, str(res)
+
+                    exec_tasks = [
+                        asyncio.create_task(_exec_call(idx, cid, tname, targs))
+                        for idx, cid, tname, targs in parsed_calls
+                    ]
+                    ordered_results: list[tuple[str, str, str] | None] = [None] * len(parsed_calls)
+
+                    for done in asyncio.as_completed(exec_tasks):
+                        c_idx, c_id, c_name, res = await done
+                        ordered_results[c_idx] = (c_id, c_name, res)
+                        yield EngineEvent(
+                            type="tool_result",
+                            content=res[:1000],
+                            tool_name=c_name,
+                            tool_call_id=c_id,
+                            provider=self._provider_id,
+                            model=request.model,
+                        )
+
+                    for item in ordered_results:
+                        if item is not None:
+                            c_id, c_name, res = item
+                            conversation.append(
+                                {
+                                    "role": "tool",
+                                    "tool_call_id": c_id,
+                                    "content": res,
+                                }
+                            )
 
         yield EngineEvent(
             type="final",
@@ -600,12 +643,13 @@ class GeminiApiEngine:
                     return
 
                 contents.append({"role": "model", "parts": round_parts})
-                response_parts: list[dict[str, Any]] = []
+                parsed_gemini_calls = []
                 for idx, fc in enumerate(function_calls):
                     call_name = str(fc.get("name") or "")
                     orig_name = name_map.get(call_name, call_name)
                     args = fc.get("args") if isinstance(fc.get("args"), dict) else {}
                     call_id = f"gemini_{_round}_{idx}"
+                    parsed_gemini_calls.append((idx, call_name, orig_name, args, call_id, fc.get("id")))
                     yield EngineEvent(
                         type="tool_call",
                         tool_name=orig_name,
@@ -614,23 +658,64 @@ class GeminiApiEngine:
                         provider="gemini-api",
                         model=request.model,
                     )
+
+                if len(parsed_gemini_calls) == 1:
+                    _, call_name, orig_name, args, call_id, fc_id = parsed_gemini_calls[0]
                     try:
                         res = await request.tool_executor(orig_name, args)
                     except Exception as exc:  # noqa: BLE001
                         res = f"ERROR: {exc}"
                     yield EngineEvent(
                         type="tool_result",
-                        content=res[:1000],
+                        content=str(res)[:1000],
                         tool_name=orig_name,
                         tool_call_id=call_id,
                         provider="gemini-api",
                         model=request.model,
                     )
-                    resp_data: dict[str, Any] = {"name": call_name, "response": {"result": res}}
-                    if fc.get("id"):
-                        resp_data["id"] = fc["id"]
-                    response_parts.append({"functionResponse": resp_data})
-                contents.append({"role": "user", "parts": response_parts})
+                    resp_data: dict[str, Any] = {"name": call_name, "response": {"result": str(res)}}
+                    if fc_id:
+                        resp_data["id"] = fc_id
+                    contents.append({"role": "user", "parts": [{"functionResponse": resp_data}]})
+                else:
+                    # Hermes-style concurrent execution for Gemini function calls
+                    gemini_sem = asyncio.Semaphore(8)
+
+                    async def _exec_gemini_call(g_idx: int, g_call_name: str, g_orig: str, g_args: dict[str, Any], g_cid: str, g_fc_id: Any) -> tuple[int, str, str, str, Any]:
+                        async with gemini_sem:
+                            try:
+                                g_res = await request.tool_executor(g_orig, g_args)
+                            except Exception as exc:  # noqa: BLE001
+                                g_res = f"ERROR: {exc}"
+                        return g_idx, g_call_name, g_orig, str(g_res), g_cid, g_fc_id
+
+                    gemini_tasks = [
+                        asyncio.create_task(_exec_gemini_call(idx, cname, oname, gargs, cid, fcid))
+                        for idx, cname, oname, gargs, cid, fcid in parsed_gemini_calls
+                    ]
+                    ordered_gemini_res: list[tuple[str, str, Any] | None] = [None] * len(parsed_gemini_calls)
+
+                    for done in asyncio.as_completed(gemini_tasks):
+                        g_idx, g_call_name, g_orig, g_res, g_cid, g_fc_id = await done
+                        ordered_gemini_res[g_idx] = (g_call_name, g_res, g_fc_id)
+                        yield EngineEvent(
+                            type="tool_result",
+                            content=g_res[:1000],
+                            tool_name=g_orig,
+                            tool_call_id=g_cid,
+                            provider="gemini-api",
+                            model=request.model,
+                        )
+
+                    response_parts: list[dict[str, Any]] = []
+                    for item in ordered_gemini_res:
+                        if item is not None:
+                            g_call_name, g_res, g_fc_id = item
+                            resp_data = {"name": g_call_name, "response": {"result": g_res}}
+                            if g_fc_id:
+                                resp_data["id"] = g_fc_id
+                            response_parts.append({"functionResponse": resp_data})
+                    contents.append({"role": "user", "parts": response_parts})
 
         yield EngineEvent(
             type="final",

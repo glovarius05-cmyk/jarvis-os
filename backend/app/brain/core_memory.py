@@ -177,6 +177,17 @@ class CoreMemoryManager:
         self._vaults.write_text(brain, CORE_MEMORY_PATH, md)
         return f"[Core Memory] Successfully updated '{SECTION_TITLES[norm_sec]}'."
 
+    def profile_user(self, brain: str, facts: list[dict[str, str]]) -> list[str]:
+        """Proactively record dialectic user traits or preferences into Core Memory (Hermes/Honcho-style)."""
+        results: list[str] = []
+        for item in facts:
+            fact_text = str(item.get("fact") or "").strip()
+            section = str(item.get("section") or "user").strip()
+            if fact_text:
+                res = self.remember(brain, fact_text, section=section)
+                results.append(res)
+        return results
+
     def view(self, brain: str) -> dict[str, Any]:
         """Return structured and raw Core Memory status."""
         raw = self.get_raw(brain)

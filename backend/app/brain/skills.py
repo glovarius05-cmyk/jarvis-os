@@ -174,6 +174,48 @@ class SkillStore:
                 return info
         return None
 
+    def save_skill(
+        self,
+        brain: str,
+        slug: str,
+        name: str,
+        description: str,
+        instructions: str,
+        group: str = "Custom",
+        enabled: bool = True,
+    ) -> SkillInfo:
+        """Create or update a skill in the active Second Brain vault."""
+        norm_slug = (slug or "").strip().lower()
+        if not _SLUG_RE.match(norm_slug):
+            raise ValueError(f"Invalid skill slug '{slug}': must be lowercase alphanumeric and hyphens (1-64 chars).")
+
+        clean_desc = (description or "").strip()[:SKILL_DESC_MAX]
+        if not clean_desc:
+            raise ValueError("Skill description cannot be empty.")
+
+        root = self._vaults.brain_path(brain)
+        target = safe_resolve(root, f"skills/{norm_slug}/SKILL.md")
+        target.parent.mkdir(parents=True, exist_ok=True)
+
+        meta = {
+            "name": (name or norm_slug).strip(),
+            "description": clean_desc,
+            "group": (group or "Custom").strip(),
+            "enabled": bool(enabled),
+        }
+        content = dump_markdown_frontmatter(meta, instructions.strip())
+        target.write_text(content, encoding="utf-8")
+
+        return SkillInfo(
+            slug=norm_slug,
+            name=meta["name"],
+            description=clean_desc,
+            group=meta["group"],
+            enabled=meta["enabled"],
+            is_system=norm_slug in self.system_slugs(),
+            path=f"skills/{norm_slug}/SKILL.md",
+        )
+
     def build_prompt_index(self, brain: str, compact: bool = False) -> str:
         """Compact skill index for system prompt injection (descriptions capped at 150 chars)."""
         enabled_skills = [s for s in self.list_skills(brain) if s.enabled]

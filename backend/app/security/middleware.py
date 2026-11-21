@@ -45,8 +45,8 @@ class SecurityMiddleware(BaseHTTPMiddleware):
         if host_header and host_header not in self._allowed_hosts and host_no_port not in self._allowed_hosts:
             return JSONResponse({"detail": "Host not allowed"}, status_code=403)
 
-        # 2. CSRF / Origin check on state-changing requests (skip token-authenticated /hooks/ and /hub/mcp)
-        if request.method in STATE_CHANGING_METHODS and not path.startswith(("/hooks/", "/hub/mcp")):
+        # 2. CSRF / Origin check on state-changing requests (skip token-authenticated /hooks/, /hub/mcp, and /v1/)
+        if request.method in STATE_CHANGING_METHODS and not path.startswith(("/hooks/", "/hub/mcp", "/v1/")):
             origin = request.headers.get("origin")
             referer = request.headers.get("referer")
             source = _extract_host(origin or referer or "")

@@ -110,6 +110,7 @@ def build_builtin_tools(
     core_memory_getter: Callable[[], Any] | None = None,
     hybrid_index_getter: Callable[[], Any] | None = None,
     character_getter: Callable[[], Any] | None = None,
+    skills_getter: Callable[[], Any] | None = None,
 ) -> list[ToolDefinition]:
     """Build the core Vault, Web, Query, and Connections tools."""
 
@@ -538,6 +539,45 @@ def build_builtin_tools(
         except Exception as exc:  # noqa: BLE001
             return f"ERROR: Failed to apply character template '{tpl_id}': {exc}"
 
+    async def jarvis_create_skill(args: dict[str, Any], brain: str) -> str:
+        s_name = str(args.get("name") or "").strip()
+        s_slug = str(args.get("slug") or "").strip()
+        s_desc = str(args.get("description") or "").strip()
+        s_inst = str(args.get("instructions") or "").strip()
+        s_group = str(args.get("group") or "Custom").strip()
+
+        if not s_name or not s_desc or not s_inst:
+            return "ERROR: name, description, and instructions are required."
+
+        sm = skills_getter() if skills_getter else None
+        if sm is None:
+            from app.brain.skills import SkillStore
+            sm = SkillStore(vaults.brains_dir.parent, vaults)
+
+        try:
+            info = sm.save_skill(
+                brain=brain,
+                slug=s_slug or s_name,
+                name=s_name,
+                description=s_desc,
+                instructions=s_inst,
+                group=s_group,
+            )
+            return f"Successfully created skill '{info.name}' (`{info.slug}`) in {info.path}. Description: {info.description}"
+        except Exception as exc:  # noqa: BLE001
+            return f"ERROR: Failed to save skill: {exc}"
+
+    async def jarvis_profile_user(args: dict[str, Any], brain: str) -> str:
+        facts = args.get("facts")
+        if not isinstance(facts, list) or not facts:
+            return "ERROR: 'facts' must be a non-empty list of {fact, section} objects."
+        cm = core_memory_getter() if core_memory_getter else None
+        if cm is None:
+            from app.brain.core_memory import CoreMemoryManager
+            cm = CoreMemoryManager(vaults)
+        results = cm.profile_user(brain, facts)
+        return "Dialectic user profiling updated:\n" + "\n".join(f"- {r}" for r in results)
+
     return [
         ToolDefinition(
             name="vault_read",
@@ -905,6 +945,51 @@ def build_builtin_tools(
             required_perm=PermLevel.SAFE,
             source="builtin:character",
             handler=jarvis_character_apply_template,
+            shape_output=False,
+        ),
+        ToolDefinition(
+            name="jarvis_create_skill",
+            description="Autonomously create or improve an Agent Skill (SKILL.md) in the active Second Brain with strict description budget (<= 150 chars).",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Human-readable skill name"},
+                    "slug": {"type": "string", "description": "Lowercase hyphenated identifier e.g. 'pdf-parser'"},
+                    "description": {"type": "string", "description": "Actionable description (strictly <= 150 characters)"},
+                    "instructions": {"type": "string", "description": "Markdown instructions body for how the agent executes this skill"},
+                    "group": {"type": "string", "default": "Synthesized", "description": "Skill category group"},
+                },
+                "required": ["name", "slug", "description", "instructions"],
+            },
+            required_perm=PermLevel.SAFE,
+            source="builtin:skills",
+            handler=jarvis_create_skill,
+            shape_output=False,
+        ),
+        ToolDefinition(
+            name="jarvis_profile_user",
+            description="Proactively update the dialectic User Profile and Context in Core Memory based on conversational traits and preferences.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "facts": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "fact": {"type": "string", "description": "Specific user trait, preference, or goal"},
+                                "section": {"type": "string", "enum": ["user", "persona", "context"], "default": "user"},
+                            },
+                            "required": ["fact"],
+                        },
+                        "description": "List of observed facts or user preferences to update",
+                    },
+                },
+                "required": ["facts"],
+            },
+            required_perm=PermLevel.SAFE,
+            source="builtin:core_memory",
+            handler=jarvis_profile_user,
             shape_output=False,
         ),
     ]

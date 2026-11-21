@@ -56,6 +56,7 @@ class MCPHubGateway:
         self._core_memory: Any = None
         self._hybrid_index: Any = None
         self._character_manager: Any = None
+        self._skills_store: Any = None
         self._builtins = build_builtin_tools(
             vaults=vaults,
             result_store=self.result_store,
@@ -66,6 +67,7 @@ class MCPHubGateway:
             core_memory_getter=lambda: self._core_memory,
             hybrid_index_getter=lambda: self._hybrid_index,
             character_getter=lambda: self._character_manager,
+            skills_getter=lambda: self._skills_store,
         )
         # Phase 3 PluginHost registers dynamic tool providers and pre/post hooks here
         self._extra_tool_providers: list[Any] = []
@@ -88,6 +90,9 @@ class MCPHubGateway:
 
     def set_character_manager(self, mgr: Any) -> None:
         self._character_manager = mgr
+
+    def set_skills_store(self, store: Any) -> None:
+        self._skills_store = store
 
     def hub_url(self) -> str:
         return f"http://127.0.0.1:{self._port}/hub/mcp"
