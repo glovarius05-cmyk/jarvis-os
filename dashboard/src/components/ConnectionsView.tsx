@@ -24,6 +24,10 @@ import {
 } from "../api/client";
 
 const SOCIAL_PLATFORMS = [
+  { id: "gmail", name: "Gmail", desc: "Read, search, draft, and send emails via Composio" },
+  { id: "googlecalendar", name: "Google Calendar", desc: "View events, schedule meetings, and manage reminders" },
+  { id: "github", name: "GitHub", desc: "Manage repos, issues, pull requests, and releases" },
+  { id: "notion", name: "Notion", desc: "Read and write pages, databases, and notes" },
   { id: "twitter", name: "Twitter / X", desc: "Short updates, threads, mentions (280 chars)" },
   { id: "linkedin", name: "LinkedIn", desc: "Professional articles, company updates (3k chars)" },
   { id: "instagram", name: "Instagram", desc: "Captions, media posts, analytics (2.2k chars)" },
@@ -312,7 +316,7 @@ export function ConnectionsView() {
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2 text-sm font-semibold text-zinc-100">
             <Share2 className="h-4 w-4 text-sky-400" />
-            <span>Social Networks via Composio</span>
+            <span>Cloud Apps & Integrations via Composio (Gmail, Calendar, GitHub, Socials)</span>
           </div>
           <div className="flex items-center gap-2">
             {composioConfigured ? (
