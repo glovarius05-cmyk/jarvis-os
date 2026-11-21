@@ -103,6 +103,10 @@ PROVIDER_SPECS: tuple[ProviderSpec, ...] = (
         suggested_models=(
             "gpt-4o",
             "gpt-4o-mini",
+            "gpt-6.1-sol",
+            "6.1-solo",
+            "gpt-6.2-sol",
+            "gpt-5.4",
             "o1",
             "o1-mini",
             "o3-mini",
@@ -167,8 +171,17 @@ PROVIDER_SPECS: tuple[ProviderSpec, ...] = (
         id="codex-cli",
         label="ChatGPT via Codex CLI (Subscription)",
         kind="cli",
-        default_model="codex-default",
-        suggested_models=("codex-default",),
+        default_model="gpt-6.1-sol",
+        suggested_models=(
+            "gpt-6.1-sol",
+            "6.1-solo",
+            "gpt-6.2-sol",
+            "gpt-5.4",
+            "gpt-4o",
+            "o3-mini",
+            "o1",
+            "codex-default",
+        ),
         cli_binary="codex",
         phase2_cli=False,
     ),
@@ -392,6 +405,12 @@ class EngineRouter:
             cwd = self._vaults.brain_path(active_brain)
             cls = CodexCliEngine if provider == "codex-cli" else AntigravityCliEngine
             binary = "codex" if provider == "codex-cli" else "agy"
+            extra_env = {}
+            if provider == "codex-cli":
+                openai_key = str(cfg.get("openai_api_key") or "").strip()
+                if openai_key:
+                    extra_env["OPENAI_API_KEY"] = openai_key
+                    extra_env["CODEX_API_KEY"] = openai_key
             return cls(
                 binary=binary,
                 hub_url=self._hub.hub_url(),
@@ -399,6 +418,7 @@ class EngineRouter:
                 cwd=cwd,
                 run_mode=run_mode,
                 redact_fn=self._hub.hide_hub_token,
+                extra_env=extra_env,
             )
 
         raise ValueError(f"Unsupported provider: {provider}")

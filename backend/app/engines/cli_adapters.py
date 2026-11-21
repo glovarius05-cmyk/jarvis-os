@@ -151,6 +151,7 @@ class BaseCliEngine:
         cwd: Path,
         run_mode: str = "full",
         redact_fn=None,
+        extra_env: dict[str, str] | None = None,
     ) -> None:
         self._binary = binary
         self._hub_url = hub_url
@@ -158,6 +159,7 @@ class BaseCliEngine:
         self._cwd = cwd
         self._run_mode = run_mode
         self._redact = redact_fn or (lambda s: s.replace(hub_token, "[REDACTED_HUB_TOKEN]") if hub_token else s)
+        self._extra_env = extra_env or {}
 
     def _build_command(self, prompt: str, request: EngineRequest, mcp_config_path: Path) -> list[str]:
         raise NotImplementedError
@@ -169,6 +171,7 @@ class BaseCliEngine:
         env["JARVIS_RUN_MODE"] = self._run_mode
         env["JARVIS_BRAIN"] = request.brain
         env["JARVIS_MCP_CONFIG"] = str(mcp_config_path)
+        env.update(self._extra_env)
         return env
 
     async def stream(self, request: EngineRequest) -> AsyncIterator[EngineEvent]:
