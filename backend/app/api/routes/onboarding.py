@@ -44,6 +44,7 @@ async def get_onboarding_status(container: AppContainer = Depends(get_container)
         public_settings.get("openrouter_api_key")
         or public_settings.get("gemini_api_key")
         or public_settings.get("perplexity_api_key")
+        or public_settings.get("openai_api_key")
     )
 
     templates = container.characters.list_templates()
@@ -75,6 +76,7 @@ def complete_onboarding(payload: OnboardingPayload, container: AppContainer = De
         "openrouter": "openrouter_api_key",
         "gemini": "gemini_api_key",
         "perplexity": "perplexity_api_key",
+        "openai": "openai_api_key",
     }
     if payload.api_key and payload.provider in key_field_map:
         updates[key_field_map[payload.provider]] = payload.api_key
@@ -86,7 +88,9 @@ def complete_onboarding(payload: OnboardingPayload, container: AppContainer = De
             if payload.provider == "local-llama":
                 model_name = "llama3.2:latest"
             elif payload.provider == "gemini":
-                model_name = "gemini-2.5-flash"
+                model_name = "gemini-3-flash-preview"
+            elif payload.provider == "openai":
+                model_name = "gpt-4o"
             else:
                 model_name = "meta-llama/llama-3.3-70b-instruct:free"
         updates["model"] = {

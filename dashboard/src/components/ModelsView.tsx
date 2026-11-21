@@ -10,6 +10,7 @@ interface ModelsViewProps {
 
 export function ModelsView({ data, onUpdated, t }: ModelsViewProps) {
   const [openrouterKey, setOpenrouterKey] = useState("");
+  const [openaiKey, setOpenaiKey] = useState("");
   const [geminiKey, setGeminiKey] = useState("");
   const [perplexityKey, setPerplexityKey] = useState("");
   const [deepseekKey, setDeepseekKey] = useState("");
@@ -39,6 +40,7 @@ export function ModelsView({ data, onUpdated, t }: ModelsViewProps) {
       },
     };
     if (openrouterKey.trim()) updates.openrouter_api_key = openrouterKey.trim();
+    if (openaiKey.trim()) updates.openai_api_key = openaiKey.trim();
     if (geminiKey.trim()) updates.gemini_api_key = geminiKey.trim();
     if (perplexityKey.trim()) updates.perplexity_api_key = perplexityKey.trim();
     if (deepseekKey.trim()) updates.deepseek_api_key = deepseekKey.trim();
@@ -47,6 +49,7 @@ export function ModelsView({ data, onUpdated, t }: ModelsViewProps) {
 
     await api.patchSettings(updates);
     setOpenrouterKey("");
+    setOpenaiKey("");
     setGeminiKey("");
     setPerplexityKey("");
     setDeepseekKey("");
@@ -230,6 +233,34 @@ export function ModelsView({ data, onUpdated, t }: ModelsViewProps) {
               placeholder={t("models.apiKeyPlaceholder")}
               className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 font-mono text-xs text-zinc-100"
             />
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="flex items-center justify-between text-xs font-medium text-zinc-300">
+              <span className="flex items-center gap-1.5">
+                <KeyRound className="h-3.5 w-3.5 text-emerald-400" /> OpenAI API Key (ChatGPT / Codex / GPT-4o)
+              </span>
+              <span className="text-zinc-400">
+                {data?.secrets_configured.openai_api_key ? t("models.keyConfigured") : t("models.keyMissing")}
+              </span>
+            </label>
+            <input
+              type="password"
+              value={openaiKey}
+              onChange={(e) => setOpenaiKey(e.target.value)}
+              placeholder="sk-..."
+              className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 font-mono text-xs text-zinc-100"
+            />
+          </div>
+
+          <div className="rounded-lg border border-zinc-800 bg-zinc-950/60 p-3 text-xs text-zinc-400 space-y-1">
+            <p className="font-medium text-zinc-300 flex items-center gap-1.5">
+              <Terminal className="h-3.5 w-3.5 text-amber-400" />
+              Подписка ChatGPT Plus / Pro (Codex CLI):
+            </p>
+            <p>
+              Если вы используете официальную утилиту <strong>Codex CLI</strong> по подписке ChatGPT, API-ключ не требуется. Авторизация выполняется в терминале сервера командой <code className="text-amber-300 font-mono">codex login</code>.
+            </p>
           </div>
 
           <div className="space-y-1.5">

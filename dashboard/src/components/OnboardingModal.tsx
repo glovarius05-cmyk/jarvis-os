@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Brain, CheckCircle2, ChevronRight, Cpu, Key, Shield, Sparkles, X } from "lucide-react";
+import { Bot, Brain, CheckCircle2, ChevronRight, Cpu, Key, Shield, Sparkles, X } from "lucide-react";
 import { api, type CharacterTemplate, type OnboardingStatus } from "../api/client";
 
 interface OnboardingModalProps {
@@ -152,6 +152,24 @@ export function OnboardingModal({ status, onCompleted, onDismiss }: OnboardingMo
                 </div>
                 <p className="mt-2 text-[11px] leading-relaxed text-zinc-400">
                   Real-time web search and verified online citations.
+                </p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setProvider("openai")}
+                className={`rounded-xl border p-4 text-left transition ${
+                  provider === "openai"
+                    ? "border-emerald-500/60 bg-emerald-500/10"
+                    : "border-zinc-800 bg-zinc-950/60 hover:border-zinc-700"
+                }`}
+              >
+                <div className="flex items-center gap-2 font-medium text-xs text-zinc-200">
+                  <Bot className="h-4 w-4 text-emerald-400" />
+                  <span>OpenAI / Codex API</span>
+                </div>
+                <p className="mt-2 text-[11px] leading-relaxed text-zinc-400">
+                  Direct access to GPT-4o, o1, o3-mini and OpenAI models.
                 </p>
               </button>
             </div>

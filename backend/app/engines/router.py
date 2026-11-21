@@ -96,6 +96,21 @@ PROVIDER_SPECS: tuple[ProviderSpec, ...] = (
         key_field="gemini_api_key",
     ),
     ProviderSpec(
+        id="openai",
+        label="OpenAI (ChatGPT / GPT-4o / Codex API)",
+        kind="api",
+        default_model="gpt-4o",
+        suggested_models=(
+            "gpt-4o",
+            "gpt-4o-mini",
+            "o1",
+            "o1-mini",
+            "o3-mini",
+            "chatgpt-4o-latest",
+        ),
+        key_field="openai_api_key",
+    ),
+    ProviderSpec(
         id="perplexity",
         label="Perplexity AI (Sonar / Web Search)",
         kind="api",
@@ -253,6 +268,8 @@ class EngineRouter:
                 return "openrouter", self._default_model_for("openrouter", c)
             return "local-llama", self._default_model_for("local-llama", c)
         else:
+            if c.get("openai_api_key"):
+                return "openai", self._default_model_for("openai", c)
             if c.get("gemini_api_key"):
                 return "gemini-api", self._default_model_for("gemini-api", c)
             return "openrouter", self._default_model_for("openrouter", c)
@@ -317,6 +334,16 @@ class EngineRouter:
             if not key:
                 raise ValueError("Google Gemini API key is not configured yet. Add it on the Models page.")
             return GeminiApiEngine(api_key=key)
+
+        if provider == "openai":
+            key = str(cfg.get("openai_api_key") or "").strip()
+            if not key:
+                raise ValueError("OpenAI API key is not configured yet. Add it on the Models page.")
+            return OpenAICompatEngine(
+                provider_id="openai",
+                base_url="https://api.openai.com/v1",
+                api_key=key,
+            )
 
         if provider == "perplexity":
             key = str(cfg.get("perplexity_api_key") or "").strip()
