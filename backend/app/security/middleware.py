@@ -40,20 +40,22 @@ class SecurityMiddleware(BaseHTTPMiddleware):
         path = request.scope.get("path", "/")
 
         # 1. Host header check (DNS rebinding protection)
-        host_header = (request.headers.get("host") or "").strip().lower()
-        host_no_port = host_header.split(":")[0] if ":" in host_header and not host_header.startswith("[") else host_header
-        if host_header and host_header not in self._allowed_hosts and host_no_port not in self._allowed_hosts:
-            return JSONResponse({"detail": "Host not allowed"}, status_code=403)
+        if "*" not in self._allowed_hosts:
+            host_header = (request.headers.get("host") or "").strip().lower()
+            host_no_port = host_header.split(":")[0] if ":" in host_header and not host_header.startswith("[") else host_header
+            if host_header and host_header not in self._allowed_hosts and host_no_port not in self._allowed_hosts:
+                return JSONResponse({"detail": "Host not allowed"}, status_code=403)
 
         # 2. CSRF / Origin check on state-changing requests (skip token-authenticated /hooks/, /hub/mcp, and /v1/)
         if request.method in STATE_CHANGING_METHODS and not path.startswith(("/hooks/", "/hub/mcp", "/v1/")):
-            origin = request.headers.get("origin")
-            referer = request.headers.get("referer")
-            source = _extract_host(origin or referer or "")
-            if source:
-                source_no_port = source.split(":")[0] if ":" in source and not source.startswith("[") else source
-                if source not in self._allowed_hosts and source_no_port not in self._allowed_hosts:
-                    return JSONResponse({"detail": "Cross-origin request rejected"}, status_code=403)
+            if "*" not in self._allowed_hosts:
+                origin = request.headers.get("origin")
+                referer = request.headers.get("referer")
+                source = _extract_host(origin or referer or "")
+                if source:
+                    source_no_port = source.split(":")[0] if ":" in source and not source.startswith("[") else source
+                    if source not in self._allowed_hosts and source_no_port not in self._allowed_hosts:
+                        return JSONResponse({"detail": "Cross-origin request rejected"}, status_code=403)
 
         # 3. Authentication gate for /api/* routes (except health/auth endpoints)
         if path.startswith("/api/") and not path.startswith(AUTH_EXEMPT_PREFIXES):

@@ -41,6 +41,7 @@ fi
 # 5. Launch Server
 PORT="${JARVIS_PORT:-7777}"
 HOST="${JARVIS_HOST:-0.0.0.0}"
+export JARVIS_ALLOWED_HOSTS="${JARVIS_ALLOWED_HOSTS:-*}"
 
 echo ""
 echo "Jarvis OS is ready!"
