@@ -87,8 +87,22 @@ class OpenAICompatEngine:
                     )
                     return
 
+                model_name = request.model
+                if self._provider_id == "openai":
+                    aliases = {
+                        "6.1-solo": "gpt-6.1-sol",
+                        "6.1-sol": "gpt-6.1-sol",
+                        "solo": "gpt-6.1-sol",
+                        "sol": "gpt-6.1-sol",
+                        "6.1-terra": "gpt-6.1-terra",
+                        "terra": "gpt-6.1-terra",
+                        "6.1-luna": "gpt-6.1-luna",
+                        "luna": "gpt-6.1-luna",
+                    }
+                    model_name = aliases.get(model_name.lower().strip(), model_name)
+
                 payload: dict[str, Any] = {
-                    "model": request.model,
+                    "model": model_name,
                     "messages": _trim_tool_history(conversation, request.tool_budget_chars),
                     "stream": True,
                 }

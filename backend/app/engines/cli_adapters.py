@@ -288,8 +288,20 @@ class CodexCliEngine(BaseCliEngine):
 
     def _build_command(self, prompt: str, request: EngineRequest, mcp_config_path: Path) -> list[str]:
         cmd = [self._binary, "exec", "--json"]
-        if request.model and request.model != "codex-default":
-            cmd += ["-m", request.model]
+        model_name = (request.model or "").strip()
+        aliases = {
+            "6.1-solo": "gpt-6.1-sol",
+            "6.1-sol": "gpt-6.1-sol",
+            "solo": "gpt-6.1-sol",
+            "sol": "gpt-6.1-sol",
+            "6.1-terra": "gpt-6.1-terra",
+            "terra": "gpt-6.1-terra",
+            "6.1-luna": "gpt-6.1-luna",
+            "luna": "gpt-6.1-luna",
+        }
+        effective_model = aliases.get(model_name.lower(), model_name)
+        if effective_model and effective_model != "codex-default":
+            cmd += ["-m", effective_model]
         # Wire Jarvis MCP Hub dynamically via Codex -c override
         cmd += [
             "-c",
