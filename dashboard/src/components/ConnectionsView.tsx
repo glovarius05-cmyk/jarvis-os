@@ -66,6 +66,8 @@ export function ConnectionsView() {
   // Composio Social State
   const [composioKey, setComposioKey] = useState("");
   const [composioConfigured, setComposioConfigured] = useState(false);
+  const [composioValid, setComposioValid] = useState(false);
+  const [connectingApp, setConnectingApp] = useState<string | null>(null);
   const [composioAccounts, setComposioAccounts] = useState<Array<{ app: string; status: string; id: string }>>([]);
   const [composioLoading, setComposioLoading] = useState(false);
   const [composioMsg, setComposioMsg] = useState<string | null>(null);
@@ -86,6 +88,7 @@ export function ConnectionsView() {
     try {
       const st = await api.getComposioStatus();
       setComposioConfigured(st.configured);
+      setComposioValid(Boolean(st.valid));
       setComposioAccounts(st.accounts || []);
       setComposioMsg(st.message);
     } catch {
@@ -147,13 +150,22 @@ export function ConnectionsView() {
   };
 
   const handleConnectPlatform = async (appId: string) => {
+    setConnectingApp(appId);
+    setComposioMsg(null);
     try {
       const res = await api.connectComposioApp(appId);
       if (res.auth_url) {
-        window.open(res.auth_url, "_blank", "noopener,noreferrer");
+        const popup = window.open(res.auth_url, "_blank", "noopener,noreferrer");
+        if (!popup || popup.closed || typeof popup.closed === "undefined") {
+          window.location.href = res.auth_url;
+        }
+      } else {
+        setComposioMsg(`Could not get authorization URL for ${appId}`);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : `Failed to connect ${appId}`);
+      setComposioMsg(err instanceof Error ? err.message : `Failed to connect ${appId}`);
+    } finally {
+      setConnectingApp(null);
     }
   };
 
@@ -363,7 +375,16 @@ export function ConnectionsView() {
           </button>
         </form>
 
-        {composioMsg && <p className="text-xs text-zinc-500">{composioMsg}</p>}
+        {composioMsg && (
+          <div className={`rounded-lg p-2.5 text-xs ${composioValid ? "bg-zinc-950 text-zinc-400" : "border border-rose-500/30 bg-rose-500/10 text-rose-300"}`}>
+            <p>{composioMsg}</p>
+            {!composioValid && (
+              <p className="mt-1 text-[11px] text-zinc-400">
+                Зайдите на <a href="https://app.composio.dev/settings" target="_blank" rel="noopener noreferrer" className="text-sky-400 underline">app.composio.dev/settings</a>, скопируйте ваш API-ключ (обычно начинается на <code className="text-amber-300 font-mono">ak_</code> или <code className="text-amber-300 font-mono">comp_</code>), вставьте его в поле выше и нажмите <strong>Save Key</strong>.
+              </p>
+            )}
+          </div>
+        )}
 
         {/* Platform Grid */}
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -394,10 +415,11 @@ export function ConnectionsView() {
                 <div className="mt-3 pt-2 border-t border-zinc-800/60">
                   <button
                     onClick={() => void handleConnectPlatform(platform.id)}
-                    disabled={!composioConfigured}
+                    disabled={!composioConfigured || !composioValid || connectingApp === platform.id}
+                    title={!composioValid ? "Enter a valid Composio API key first" : ""}
                     className="inline-flex w-full items-center justify-center gap-1.5 rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white disabled:opacity-40"
                   >
-                    <span>{isConnected ? "Reconnect" : "Connect"}</span>
+                    <span>{connectingApp === platform.id ? "Connecting..." : isConnected ? "Reconnect" : "Connect"}</span>
                     <ExternalLink className="h-3 w-3" />
                   </button>
                 </div>

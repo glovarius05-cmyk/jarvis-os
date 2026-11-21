@@ -374,7 +374,7 @@ export const api = {
   getSystemStatus: () => requestJson<SystemStatus>("/api/system/status"),
   getSettings: () => requestJson<Record<string, unknown>>("/api/settings"),
   getComposioStatus: () =>
-    requestJson<{ configured: boolean; accounts: Array<{ app: string; status: string; id: string }>; message: string }>(
+    requestJson<{ configured: boolean; valid?: boolean; accounts: Array<{ app: string; status: string; id: string }>; message: string }>(
       "/api/hub/composio/status"
     ),
   connectComposioApp: (app: string, redirect_url = "") =>
