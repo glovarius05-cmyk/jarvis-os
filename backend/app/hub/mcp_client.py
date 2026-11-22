@@ -331,7 +331,10 @@ class MCPClientPool:
         async with httpx.AsyncClient(timeout=25.0, transport=self._http_transport, follow_redirects=True) as client:
             resp = await client.post(url, headers=headers, json=payload)
             if resp.status_code >= 400:
-                raise RuntimeError(f"MCP HTTP {resp.status_code}: {resp.text[:300]}")
+                err_text = resp.text[:300]
+                if "Invalid or expired token" in err_text:
+                    raise RuntimeError("Неверный или устаревший токен. Очистите поле API Key или нажмите кнопку '1-Click Sign in with Agensi' для входа через OAuth.")
+                raise RuntimeError(f"MCP HTTP {resp.status_code}: {err_text}")
             text = resp.text.strip()
             if "data: " in text:
                 for line in text.splitlines():

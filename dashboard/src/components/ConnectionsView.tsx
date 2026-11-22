@@ -693,49 +693,73 @@ export function ConnectionsView() {
           <span>Add External MCP Server</span>
         </div>
         <div className="grid gap-3 sm:grid-cols-4">
-          <input
-            value={connId}
-            onChange={(e) => setConnId(e.target.value)}
-            placeholder="id (e.g. github)"
-            required
-            className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 font-mono text-xs text-zinc-100"
-          />
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="Display name"
-            required
-            className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-xs text-zinc-100"
-          />
-          <select
-            value={transport}
-            onChange={(e) => setTransport(e.target.value as "http" | "stdio")}
-            className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-xs text-zinc-100"
-          >
-            <option value="http">HTTP JSON-RPC</option>
-            <option value="stdio">Stdio Subprocess</option>
-          </select>
-          <select
-            value={perm}
-            onChange={(e) => setPerm(e.target.value as "readonly" | "safe" | "full")}
-            className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-xs text-zinc-100"
-          >
-            <option value="readonly">Perm: readonly</option>
-            <option value="safe">Perm: safe</option>
-            <option value="full">Perm: full</option>
-          </select>
+          <div>
+            <label className="block text-[11px] text-zinc-400 mb-1">ID соединения</label>
+            <input
+              value={connId}
+              onChange={(e) => {
+                const val = e.target.value.trim();
+                if (val.startsWith("http://") || val.startsWith("https://")) {
+                  setUrl(val);
+                  const m = val.match(/https?:\/\/(?:mcp\.)?([a-z0-9_-]+)/i);
+                  setConnId(m ? m[1].toLowerCase() : "custom");
+                } else {
+                  setConnId(val);
+                }
+              }}
+              placeholder="id (e.g. agensi, github)"
+              required
+              className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 font-mono text-xs text-zinc-100"
+            />
+          </div>
+          <div>
+            <label className="block text-[11px] text-zinc-400 mb-1">Название (Display name)</label>
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Display name"
+              required
+              className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-xs text-zinc-100"
+            />
+          </div>
+          <div>
+            <label className="block text-[11px] text-zinc-400 mb-1">Протокол</label>
+            <select
+              value={transport}
+              onChange={(e) => setTransport(e.target.value as "http" | "stdio")}
+              className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-xs text-zinc-100"
+            >
+              <option value="http">HTTP JSON-RPC</option>
+              <option value="stdio">Stdio Subprocess</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-[11px] text-zinc-400 mb-1">Режим доступа</label>
+            <select
+              value={perm}
+              onChange={(e) => setPerm(e.target.value as "readonly" | "safe" | "full")}
+              className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-xs text-zinc-100"
+            >
+              <option value="readonly">Perm: readonly</option>
+              <option value="safe">Perm: safe</option>
+              <option value="full">Perm: full</option>
+            </select>
+          </div>
         </div>
 
         {/* Authentication via API Key / Bearer Token */}
         {transport === "http" ? (
           <div className="space-y-3">
-            <input
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              placeholder="http://127.0.0.1:8080/mcp or https://api.service.com/mcp"
-              required
-              className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 font-mono text-xs text-zinc-100"
-            />
+            <div>
+              <label className="block text-[11px] text-zinc-400 mb-1">URL адрес MCP-сервера</label>
+              <input
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                placeholder="https://mcp.agensi.io/mcp or http://127.0.0.1:8080/mcp"
+                required
+                className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 font-mono text-xs text-zinc-100"
+              />
+            </div>
             <div className="grid gap-3 sm:grid-cols-3">
               <div className="sm:col-span-1">
                 <label className="block text-[11px] text-zinc-400 mb-1">Header Type</label>
@@ -762,6 +786,11 @@ export function ConnectionsView() {
                     className="w-full rounded-lg border border-zinc-700 bg-zinc-950 pl-8 pr-3 py-1.5 font-mono text-xs text-zinc-100"
                   />
                 </div>
+                {connId === "agensi" && apiKey.trim() && (
+                  <p className="mt-1 text-[11px] text-amber-400">
+                    ⚠️ У Agensi нет статических ключей. Очистите это поле, чтобы протестировать публичный каталог (29 инструментов), или нажмите «Sign in via Agensi OAuth» для авторизации.
+                  </p>
+                )}
               </div>
             </div>
           </div>
