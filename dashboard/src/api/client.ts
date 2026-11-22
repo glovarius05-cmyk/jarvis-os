@@ -377,6 +377,10 @@ export const api = {
     requestJson<{ configured: boolean; valid?: boolean; masked_key?: string; accounts: Array<{ app: string; status: string; id: string }>; message: string }>(
       "/api/hub/composio/status"
     ),
+  resetComposioKey: () =>
+    requestJson<{ ok: boolean; message: string }>("/api/hub/composio/reset", {
+      method: "POST",
+    }),
   connectComposioApp: (app: string, redirect_url = "") =>
     requestJson<{ ok: boolean; app: string; auth_url: string }>("/api/hub/composio/connect", {
       method: "POST",

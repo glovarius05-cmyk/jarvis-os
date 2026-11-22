@@ -166,12 +166,46 @@ class ComposioConnectPayload(BaseModel):
 COMPOSIO_BASE = "https://backend.composio.dev/api/v3.1"
 
 
+def sanitize_composio_key(raw_key: Any) -> str:
+    s = str(raw_key or "").strip().strip('"').strip("'")
+    if not s:
+        return ""
+    import re
+    # Extract token if user pasted export VAR=ak_... or COMPOSIO_API_KEY="ak_..."
+    m = re.search(r"((?:ak|oak|uak)_[a-zA-Z0-9_\-]+)", s)
+    if m:
+        return m.group(1).strip()
+    if "=" in s:
+        s = s.split("=", 1)[1].strip().strip('"').strip("'")
+    if s.lower().startswith("bearer "):
+        s = s[7:].strip()
+    return s
+
+
+@router.post("/api/hub/composio/reset")
+async def reset_composio_key(container: AppContainer = Depends(get_container)) -> dict[str, Any]:
+    """Explicitly reset/clear Composio API key from settings."""
+    container.settings.update({"composio_api_key": ""})
+    return {"ok": True, "message": "Composio API key successfully cleared"}
+
+
 @router.get("/api/hub/composio/status")
 async def get_composio_status(container: AppContainer = Depends(get_container)) -> dict[str, Any]:
     raw_key = container.settings.load().get("composio_api_key") or ""
-    key = str(raw_key).strip().strip('"').strip("'")
+    key = sanitize_composio_key(raw_key)
     if not key:
         return {"configured": False, "valid": False, "accounts": [], "message": "Composio API key is not configured"}
+
+    # Helpful hint if key has an unexpected prefix
+    if key.startswith("sk-"):
+        masked_sk = f"{key[:7]}...{key[-3:]}"
+        return {
+            "configured": True,
+            "valid": False,
+            "masked_key": masked_sk,
+            "accounts": [],
+            "message": f"Detected OpenAI key format ({masked_sk}) instead of Composio key. Please copy Project API Key from app.composio.dev/settings (starts with ak_).",
+        }
 
     import json
     import re
@@ -214,6 +248,7 @@ async def get_composio_status(container: AppContainer = Depends(get_container)) 
     header_variants = [
         {"x-api-key": key, "Accept": "application/json"},
         {"x-org-api-key": key, "Accept": "application/json"},
+        {"x-user-api-key": key, "Accept": "application/json"},
         {"Authorization": f"Bearer {key}", "Accept": "application/json"},
     ]
     urls_to_try = [
@@ -284,7 +319,7 @@ async def initiate_composio_connect(
     container: AppContainer = Depends(get_container),
 ) -> dict[str, Any]:
     raw_key = container.settings.load().get("composio_api_key") or ""
-    key = str(raw_key).strip().strip('"').strip("'")
+    key = sanitize_composio_key(raw_key)
     if not key:
         raise HTTPException(status_code=400, detail="Composio API key is not configured in Settings")
 

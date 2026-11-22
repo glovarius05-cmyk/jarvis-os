@@ -153,6 +153,20 @@ export function ConnectionsView() {
     }
   };
 
+  const handleResetComposioKey = async () => {
+    setComposioLoading(true);
+    setComposioMsg("Сброс ключа...");
+    try {
+      await api.resetComposioKey();
+      setComposioKey("");
+      await refreshComposio();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to reset Composio key");
+    } finally {
+      setComposioLoading(false);
+    }
+  };
+
   const handleConnectPlatform = async (appId: string) => {
     setConnectingApp(appId);
     setComposioMsg(null);
@@ -383,6 +397,17 @@ export function ConnectionsView() {
           >
             {composioLoading ? "Saving..." : "Save Key"}
           </button>
+          {composioConfigured && (
+            <button
+              type="button"
+              onClick={() => void handleResetComposioKey()}
+              disabled={composioLoading}
+              className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-1.5 text-xs font-medium text-rose-300 hover:bg-rose-500/20 disabled:opacity-50 transition"
+              title="Обнулить ключ Composio"
+            >
+              Сбросить ключ
+            </button>
+          )}
         </form>
 
         {composioMaskedKey && (
@@ -397,7 +422,7 @@ export function ConnectionsView() {
             <p>{composioMsg}</p>
             {!composioValid && (
               <p className="mt-1 text-[11px] text-zinc-400">
-                Зайдите на вкладку <a href="https://app.composio.dev/settings" target="_blank" rel="noopener noreferrer" className="text-sky-400 underline font-medium">Dashboard | Agensi (Composio)</a> → <strong>Settings</strong> → <strong>API Keys</strong>, скопируйте ключ (<code className="text-amber-300 font-mono">ak_...</code>), вставьте его в поле выше и нажмите <strong>Save Key</strong>.
+                Зайдите в <a href="https://app.composio.dev/settings" target="_blank" rel="noopener noreferrer" className="text-sky-400 underline font-medium">Composio (браузер Comet)</a> → <strong>Settings</strong> → <strong>Project Settings</strong> → <strong>API Keys</strong>, скопируйте Project API Key (<code className="text-amber-300 font-mono">ak_...</code>), вставьте его в поле выше и нажмите <strong>Save Key</strong>.
               </p>
             )}
           </div>
