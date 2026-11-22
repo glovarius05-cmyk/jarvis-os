@@ -1,7 +1,7 @@
-name: Composio Social Manager
+name: Composio Integrations & Social Manager
 slug: composio-social
-version: 1.0.0
-description: Connect, manage, read feeds, and publish content to Twitter/X, LinkedIn, Instagram, Facebook, and YouTube via Composio.
+version: 1.1.0
+description: Connect, manage, inspect emails/calendars, read feeds, and publish content via Composio.
 enabled: true
 min_mode: readonly
 tools:
@@ -9,4 +9,6 @@ tools:
   - composio_connect
   - composio_feed
   - composio_post
+  - composio_gmail
+  - composio_calendar
 hooks: []

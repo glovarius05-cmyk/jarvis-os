@@ -59,6 +59,8 @@ async def test_composio_social_plugin_tools_and_permissions(tmp_path: Path) -> N
     assert "composio_connect" in tool_names
     assert "composio_feed" in tool_names
     assert "composio_post" in tool_names
+    assert "composio_gmail" in tool_names
+    assert "composio_calendar" in tool_names
 
     # Check permission levels
     tool_map = {t["name"]: t for t in tools}
@@ -66,6 +68,8 @@ async def test_composio_social_plugin_tools_and_permissions(tmp_path: Path) -> N
     assert tool_map["composio_connect"]["required_perm"] == "safe"
     assert tool_map["composio_feed"]["required_perm"] == "readonly"
     assert tool_map["composio_post"]["required_perm"] == "full"
+    assert tool_map["composio_gmail"]["required_perm"] == "safe"
+    assert tool_map["composio_calendar"]["required_perm"] == "safe"
 
     # Status check with no key configured
     status_out = await hub.call_tool(name="composio_status", args={}, brain="Brain Default", run_mode="suggest")

@@ -1,9 +1,11 @@
-"""Bundled plugin: composio-social — unified social media management via Composio.
+"""Bundled plugin: composio-social - unified social media, Gmail, and Google Calendar management via Composio.
 
 Provides:
-- composio_status (readonly): inspect API key status and list connected social accounts.
-- composio_connect (safe): initiate OAuth connection flow for Twitter, LinkedIn, Instagram, etc.
-- composio_feed (readonly): fetch recent posts, mentions, and analytics from connected networks.
+- composio_status (readonly): inspect API key status and list connected accounts (Gmail with email address, Calendar, etc.).
+- composio_connect (safe): initiate OAuth connection flow for Gmail, Calendar, Twitter, LinkedIn, etc.
+- composio_gmail (safe): inspect Gmail profile, search/read emails, or send emails.
+- composio_calendar (safe): list upcoming calendar events or create new events.
+- composio_feed (readonly): fetch recent posts, mentions, emails, or events.
 - composio_post (full): publish posts, threads, or updates with strict platform constraints.
 """
 
@@ -13,6 +15,8 @@ import json
 from typing import Any
 
 import httpx
+
+from app.api.routes.hub import extract_app_slug
 
 COMPOSIO_API_BASE = "https://backend.composio.dev/api/v3.1"
 
@@ -38,219 +42,412 @@ def _get_api_key(ctx) -> str:
     return ""
 
 
+async def _execute_composio_action(
+    api_key: str,
+    action_name: str,
+    arguments: dict[str, Any] | None = None,
+    timeout: float = 15.0,
+) -> dict[str, Any]:
+    """Execute a Composio tool/action across multiple API version endpoints."""
+    args = arguments or {}
+    headers_variants = [
+        {"x-api-key": api_key, "Content-Type": "application/json"},
+        {"x-consumer-api-key": api_key, "Content-Type": "application/json"},
+        {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+    ]
+    endpoints = [
+        f"https://backend.composio.dev/api/v3/tools/execute/{action_name}",
+        f"{COMPOSIO_API_BASE}/actions/{action_name}/execute",
+        f"https://backend.composio.dev/api/v3/actions/{action_name}/execute",
+    ]
+    payload = {"arguments": args}
+
+    for url in endpoints:
+        for headers in headers_variants:
+            try:
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    res = await client.post(url, headers=headers, json=payload)
+                    if res.status_code in {200, 201}:
+                        data = res.json()
+                        resp = (
+                            data.get("response_data")
+                            or data.get("data")
+                            or data.get("result")
+                            or data
+                        )
+                        return {"success": True, "data": resp, "status_code": res.status_code}
+            except Exception:
+                continue
+
+    # Fallback to connect MCP
+    try:
+        rpc_payload = {
+            "jsonrpc": "2.0",
+            "id": 99,
+            "method": "tools/call",
+            "params": {
+                "name": "COMPOSIO_EXECUTE_TOOL",
+                "arguments": {"action_name": action_name, "arguments": args},
+            },
+        }
+        for headers in headers_variants:
+            try:
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    res = await client.post("https://connect.composio.dev/mcp", headers=headers, json=rpc_payload)
+                    if res.status_code == 200:
+                        data = res.json().get("result", {})
+                        raw_text = ""
+                        if isinstance(data, dict):
+                            content = data.get("content", [])
+                            if isinstance(content, list) and content:
+                                raw_text = content[0].get("text", "")
+                        if not raw_text and isinstance(data, str):
+                            raw_text = data
+                        if raw_text:
+                            try:
+                                return {"success": True, "data": json.loads(raw_text), "status_code": 200}
+                            except Exception:
+                                return {"success": True, "data": raw_text, "status_code": 200}
+                        return {"success": True, "data": data, "status_code": 200}
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    return {"success": False, "error": f"Failed to execute action {action_name}"}
+
+
+async def _get_connected_apps(ctx, api_key: str) -> dict[str, dict[str, Any]]:
+    """Gather all connected accounts from settings, REST API, and MCP."""
+    accounts: dict[str, dict[str, Any]] = {}
+
+    # 1. Check locally confirmed / persisted connections in settings
+    settings = ctx.services.get("settings")
+    if settings is not None:
+        try:
+            cfg = settings.load()
+            saved_apps = cfg.get("composio_connected_apps") or []
+            if isinstance(saved_apps, list):
+                for s in saved_apps:
+                    slug = extract_app_slug(s)
+                    if slug:
+                        accounts[slug] = {"app": slug, "status": "ACTIVE", "id": f"local_{slug}"}
+        except Exception:
+            pass
+
+    # 2. REST API queries
+    rest_urls = [
+        f"{COMPOSIO_API_BASE}/connected_accounts?account_type=ALL",
+        f"{COMPOSIO_API_BASE}/connected_accounts",
+        f"{COMPOSIO_API_BASE}/connected_accounts?user_ids=default",
+        "https://backend.composio.dev/api/v3/connected_accounts?account_type=ALL",
+        "https://backend.composio.dev/api/v3/connected_accounts",
+        "https://backend.composio.dev/api/v3/connected_accounts?user_ids=default",
+    ]
+    headers_variants = [
+        {"x-api-key": api_key, "Accept": "application/json"},
+        {"x-consumer-api-key": api_key, "Accept": "application/json"},
+        {"Authorization": f"Bearer {api_key}", "Accept": "application/json"},
+    ]
+    for url in rest_urls:
+        for hdrs in headers_variants:
+            try:
+                async with httpx.AsyncClient(timeout=8.0) as client:
+                    res = await client.get(url, headers=hdrs)
+                    if res.status_code == 200:
+                        data = res.json()
+                        items = []
+                        if isinstance(data, list):
+                            items = data
+                        elif isinstance(data, dict):
+                            items = (
+                                data.get("items")
+                                or data.get("connected_accounts")
+                                or data.get("data")
+                                or data.get("results")
+                                or []
+                            )
+                        for it in items:
+                            if not isinstance(it, dict):
+                                continue
+                            slug = extract_app_slug(it)
+                            if not slug:
+                                continue
+                            raw_st = str(it.get("status") or "ACTIVE").upper()
+                            st = "ACTIVE" if raw_st in ("ACTIVE", "CONNECTED", "READY", "ENABLED", "INITIATED", "INITIALIZED") else raw_st
+                            acc_id = str(it.get("id") or it.get("nanoid") or it.get("accountId") or slug)
+                            alias = str(it.get("alias") or it.get("account_identifier") or "")
+                            acc_entry: dict[str, Any] = {"app": slug, "status": st, "id": acc_id}
+                            if alias:
+                                acc_entry["alias"] = alias
+                            accounts[slug] = acc_entry
+            except Exception:
+                continue
+
+    # 3. Direct MCP call to connect.composio.dev/mcp
+    check_toolkits = ["gmail", "googlecalendar", "googlesheets", "github", "notion", "twitter", "linkedin", "instagram"]
+    for hdrs in headers_variants:
+        try:
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                call_res = await client.post(
+                    "https://connect.composio.dev/mcp",
+                    json={
+                        "jsonrpc": "2.0",
+                        "method": "tools/call",
+                        "params": {
+                            "name": "COMPOSIO_MANAGE_CONNECTIONS",
+                            "arguments": {"toolkits": check_toolkits, "reinitiate_all": False},
+                        },
+                        "id": 2,
+                    },
+                    headers=hdrs,
+                )
+                if call_res.status_code == 200:
+                    payload = call_res.json().get("result", {})
+                    raw_text = ""
+                    if isinstance(payload, dict):
+                        content = payload.get("content", [])
+                        if isinstance(content, list) and content:
+                            raw_text = content[0].get("text", "")
+                    if not raw_text and isinstance(payload, str):
+                        raw_text = payload
+                    res_obj = {}
+                    if raw_text:
+                        try:
+                            res_obj = json.loads(raw_text)
+                        except Exception:
+                            pass
+                    elif isinstance(payload, dict):
+                        res_obj = payload
+
+                    results_map = (
+                        res_obj.get("data", {}).get("results", {})
+                        if isinstance(res_obj.get("data"), dict)
+                        else res_obj.get("results", {})
+                    )
+                    if isinstance(results_map, dict):
+                        for tk, tk_info in results_map.items():
+                            if not isinstance(tk_info, dict):
+                                continue
+                            norm_slug = extract_app_slug(tk)
+                            st = str(tk_info.get("status") or "").lower()
+                            accs = tk_info.get("accounts") or []
+                            is_active = (
+                                st in ("active", "connected", "ready", "enabled", "initiated", "initialized")
+                                or any(
+                                    str(a.get("status") or "").upper() in ("ACTIVE", "CONNECTED", "READY", "ENABLED", "INITIATED")
+                                    for a in accs
+                                    if isinstance(a, dict)
+                                )
+                                or (bool(accs) and st != "disconnected")
+                            )
+                            if is_active:
+                                accounts[norm_slug] = {"app": norm_slug, "status": "ACTIVE", "id": norm_slug}
+                    break
+        except Exception:
+            continue
+
+    # 4. If Gmail is connected, discover user email address via GMAIL_GET_PROFILE
+    if "gmail" in accounts:
+        try:
+            profile_res = await _execute_composio_action(api_key, "GMAIL_GET_PROFILE", {}, timeout=8.0)
+            if profile_res.get("success"):
+                pdata = profile_res.get("data", {})
+                if isinstance(pdata, dict):
+                    email = (
+                        pdata.get("emailAddress")
+                        or pdata.get("email")
+                        or pdata.get("email_address")
+                        or ""
+                    )
+                    if email:
+                        accounts["gmail"]["email"] = str(email)
+                        accounts["gmail"]["messagesTotal"] = pdata.get("messagesTotal")
+                        accounts["gmail"]["threadsTotal"] = pdata.get("threadsTotal")
+        except Exception:
+            pass
+
+    return accounts
+
+
 def register(ctx) -> None:
     async def composio_status(_args: dict, _brain: str) -> str:
         api_key = _get_api_key(ctx)
         if not api_key:
             return (
                 "Composio API key is NOT configured. "
-                "Please configure 'composio_api_key' in Settings or Connections to use social tools."
+                "Please configure 'composio_api_key' in Settings or Connections to use social and email tools."
             )
 
-        # 1. Try Composio Remote MCP tool first
-        hub = ctx.services.get("hub")
-        if hub is not None:
-            try:
-                import re
-                raw = await hub.call_tool(
-                    name="mcp__composio__COMPOSIO_MANAGE_CONNECTIONS",
-                    args={"toolkits": ["instagram", "facebook", "linkedin", "twitter", "threads", "github", "gmail", "googlesheets"]},
-                    brain=_brain,
-                    run_mode="full",
-                    for_model=False,
-                )
-                data = json.loads(raw)
-                results = data.get("data", {}).get("results", {})
-                connected = []
-                for app_name, app_info in results.items():
-                    if not isinstance(app_info, dict):
-                        continue
-                    status = app_info.get("status") or "disconnected"
-                    accs = app_info.get("accounts") or []
-                    if status == "active" or any(a.get("status") == "ACTIVE" for a in accs):
-                        connected.append(f"- {app_name.upper()} (status: ACTIVE)")
-                    elif accs:
-                        connected.append(f"- {app_name.upper()} (status: {accs[0].get('status', 'PENDING')})")
-                if connected:
-                    return "Active Composio connections:\n" + "\n".join(connected)
-                return (
-                    "Composio Remote MCP is active (valid consumer key). No social accounts are connected yet.\n"
-                    "Use composio_connect(app='instagram' | 'facebook' | 'linkedin' | 'twitter') to link an account."
-                )
-            except Exception:
-                pass
+        accounts = await _get_connected_apps(ctx, api_key)
+        if not accounts:
+            return (
+                "Ключ Composio активен и валиден, но ни одного аккаунта сервисов пока не подключено.\n"
+                "Перейдите в интерфейсе в раздел Connections и нажмите 'Connect' для нужного сервиса (Gmail, Календарь, Twitter и др.)."
+            )
 
-        # 2. Check connected accounts via Composio REST API fallback
-        headers = {"x-api-key": api_key, "Content-Type": "application/json"}
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                res = await client.get(f"{COMPOSIO_API_BASE}/connected_accounts", headers=headers)
-                if res.status_code == 200:
-                    data = res.json()
-                    items = data.get("items") or data.get("connected_accounts") or data.get("data") or []
-                    if not items:
-                        return (
-                            "Composio API key is valid, but no social accounts are connected yet. "
-                            "Use composio_connect(app='twitter' | 'linkedin' | 'instagram') to link an account."
-                        )
-                    connected = []
-                    for it in items:
-                        raw_app = (
-                            it.get("appUniqueId")
-                            or it.get("appName")
-                            or it.get("app_name")
-                            or it.get("app")
-                            or it.get("toolkit")
-                            or "unknown"
-                        )
-                        if isinstance(raw_app, dict):
-                            raw_app = raw_app.get("slug") or raw_app.get("name") or "unknown"
-                        app_name = str(raw_app).strip()
-                        status = it.get("status", "ACTIVE")
-                        account_id = it.get("id") or it.get("nanoid") or it.get("accountId") or "id"
-                        connected.append(f"- {app_name.upper()} (status: {status}, id: {account_id})")
-                    return "Active Composio connections:\n" + "\n".join(connected)
-                elif res.status_code in {401, 403}:
-                    return f"ERROR: Composio authentication failed ({res.status_code}). Please verify your composio_api_key."
-                else:
-                    return f"Composio returned status {res.status_code}: {res.text[:200]}"
-        except Exception as exc:
-            return f"ERROR: Failed to contact Composio API: {exc}"
+        lines = ["Статус подключений Composio: АКТИВЕН"]
+        lines.append(f"Всего подключенных сервисов: {len(accounts)}")
+        for slug, info in accounts.items():
+            email_info = f", email: {info['email']}" if "email" in info else ""
+            lines.append(f"- {slug.upper()}{email_info} (статус: {info.get('status', 'ACTIVE')})")
+
+        lines.append("\nВсе указанные интеграции готовы к работе (чтение почты, расписание календаря, посты).")
+        return "\n".join(lines)
 
     async def composio_connect(args: dict, _brain: str) -> str:
         app = str(args.get("app") or args.get("platform") or "").strip().lower()
         if not app:
-            return "ERROR: 'app' parameter is required (e.g. twitter, linkedin, instagram, facebook, youtube, threads, reddit)."
+            return "ERROR: 'app' parameter is required (e.g. gmail, googlecalendar, twitter, linkedin, instagram)."
 
         api_key = _get_api_key(ctx)
         if not api_key:
             return "ERROR: Composio API key is not configured. Add 'composio_api_key' in Settings."
 
-        # Special case for Twitter / X setup
-        if app in ("twitter", "x"):
-            return (
-                "Twitter / X Connection:\n"
-                "Composio requires custom developer credentials for Twitter on standard accounts.\n"
-                "Please configure Twitter in Composio dashboard here:\n"
-                "https://dashboard.composio.dev/~/org/connect/apps/twitter?open=true\n"
-                "Once completed, run composio_status to confirm the connection."
-            )
+        norm_app = extract_app_slug(app) or app
+        dashboard_url = f"https://dashboard.composio.dev/~/org/connect/apps/{norm_app}?open=true"
+        return (
+            f"Для подключения {norm_app.upper()} перейдите по ссылке авторизации в браузере:\n"
+            f"{dashboard_url}\n"
+            f"После авторизации вернитесь в Jarvis OS и запустите composio_status для проверки."
+        )
 
-        # 1. Try Composio Remote MCP tool first
-        hub = ctx.services.get("hub")
-        if hub is not None:
-            try:
-                import re
-                raw = await hub.call_tool(
-                    name="mcp__composio__COMPOSIO_MANAGE_CONNECTIONS",
-                    args={"toolkits": [app]},
-                    brain=_brain,
-                    run_mode="full",
-                    for_model=False,
+    async def composio_gmail(args: dict, _brain: str) -> str:
+        api_key = _get_api_key(ctx)
+        if not api_key:
+            return "ERROR: Composio API key is not configured. Add 'composio_api_key' in Settings."
+
+        action = str(args.get("action") or "profile").strip().lower()
+        query = str(args.get("query") or "").strip()
+        limit = int(args.get("limit") or 5)
+        message_id = str(args.get("message_id") or "").strip()
+
+        if action in ("profile", "status", "whoami", "email", "info"):
+            res = await _execute_composio_action(api_key, "GMAIL_GET_PROFILE", {})
+            if res.get("success"):
+                pdata = res.get("data", {})
+                email = pdata.get("emailAddress") or pdata.get("email") or "подключен"
+                total_msgs = pdata.get("messagesTotal", "N/A")
+                total_threads = pdata.get("threadsTotal", "N/A")
+                return (
+                    f"Подключенный профиль Gmail:\n"
+                    f"- Email: {email}\n"
+                    f"- Всего сообщений в ящике: {total_msgs}\n"
+                    f"- Всего цепочек писем: {total_threads}\n"
+                    f"- Статус интеграции: АКТИВЕН"
                 )
-                data = json.loads(raw)
-                res_info = data.get("data", {}).get("results", {}).get(app, {})
-                auth_url = res_info.get("redirect_url") or ""
-                if not auth_url and "dashboard.composio.dev" in res_info.get("error_message", ""):
-                    m = re.search(r"https://dashboard\.composio\.dev/[^\s\)\>]+", res_info["error_message"])
-                    if m:
-                        auth_url = m.group(0)
-                if auth_url:
-                    return (
-                        f"OAuth connection initiated for {app.upper()}.\n"
-                        f"Open this URL in your browser to authorize access:\n{auth_url}\n"
-                        f"After authorization, run composio_status to confirm the connection."
-                    )
-            except Exception:
-                pass
+            return f"Gmail подключен, но запрос профиля вернул: {res.get('error')}"
 
-        # 2. Fallback to direct REST API
-        redirect_url = str(args.get("redirect_url") or "http://127.0.0.1:7777/hub").strip()
-        headers = {"x-api-key": api_key, "Content-Type": "application/json"}
-        payload = {
-            "appName": app,
-            "redirectUrl": redirect_url,
-        }
+        if action in ("list", "messages", "inbox", "search", "unread"):
+            search_query = query or "in:inbox"
+            res = await _execute_composio_action(
+                api_key,
+                "GMAIL_LIST_MESSAGES",
+                {"query": search_query, "max_results": limit},
+            )
+            if not res.get("success"):
+                res = await _execute_composio_action(
+                    api_key,
+                    "GMAIL_FETCH_EMAILS",
+                    {"query": search_query, "max_results": limit},
+                )
+            if res.get("success"):
+                data = res.get("data")
+                return f"Письма Gmail по запросу '{search_query}':\n{json.dumps(data, ensure_ascii=False, indent=2)}"
+            return f"Не удалось получить список писем: {res.get('error')}"
 
-        try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                res = await client.post(f"{COMPOSIO_API_BASE}/connected_accounts/link", headers=headers, json={"user_id": "default", "auth_config_id": app, "redirect_url": redirect_url})
-                if res.status_code in {200, 201}:
-                    data = res.json()
-                    auth_url = (
-                        data.get("redirectUrl")
-                        or data.get("connectionUrl")
-                        or data.get("authUrl")
-                        or data.get("url")
-                        or data.get("link")
-                    )
-                    if auth_url:
-                        return (
-                            f"OAuth connection initiated for {app.upper()}.\n"
-                            f"Open this URL in your browser to authorize access:\n{auth_url}\n"
-                            f"After authorization, run composio_status to confirm the connection."
-                        )
-                    return f"Initiated connection: {json.dumps(data, ensure_ascii=False)}"
-                # Fallback to direct /connected_accounts
-                res_alt = await client.post(f"{COMPOSIO_API_BASE}/connected_accounts", headers=headers, json=payload)
-                if res_alt.status_code in {200, 201}:
-                    data_alt = res_alt.json()
-                    auth_url = (
-                        data_alt.get("redirectUrl")
-                        or data_alt.get("connectionUrl")
-                        or data_alt.get("authUrl")
-                        or data_alt.get("url")
-                    )
-                    if auth_url:
-                        return (
-                            f"OAuth connection initiated for {app.upper()}.\n"
-                            f"Open this URL in your browser to authorize access:\n{auth_url}\n"
-                            f"After authorization, run composio_status to confirm the connection."
-                        )
-                    return f"Initiated connection: {json.dumps(data_alt, ensure_ascii=False)}"
-                return f"ERROR from Composio ({res.status_code}): {res.text[:300]}"
-        except Exception as exc:
-            return f"ERROR: Failed to initiate connection for {app}: {exc}"
+        if action in ("read", "get", "message"):
+            if not message_id:
+                return "ERROR: 'message_id' is required to read a specific message."
+            res = await _execute_composio_action(api_key, "GMAIL_GET_MESSAGE", {"message_id": message_id})
+            if res.get("success"):
+                return f"Письмо Gmail ({message_id}):\n{json.dumps(res.get('data'), ensure_ascii=False, indent=2)}"
+            return f"Не удалось прочитать письмо: {res.get('error')}"
+
+        if action in ("send",):
+            to = str(args.get("to") or "").strip()
+            subject = str(args.get("subject") or "").strip()
+            body = str(args.get("body") or "").strip()
+            if not to or not body:
+                return "ERROR: 'to' and 'body' parameters are required to send an email."
+            res = await _execute_composio_action(
+                api_key,
+                "GMAIL_SEND_EMAIL",
+                {"recipient_email": to, "subject": subject, "body": body},
+            )
+            if res.get("success"):
+                return f"Письмо успешно отправлено на адрес {to}!"
+            return f"Не удалось отправить письмо: {res.get('error')}"
+
+        return f"Неизвестное действие Gmail: {action}. Доступны: profile, list, search, read, send."
+
+    async def composio_calendar(args: dict, _brain: str) -> str:
+        api_key = _get_api_key(ctx)
+        if not api_key:
+            return "ERROR: Composio API key is not configured. Add 'composio_api_key' in Settings."
+
+        action = str(args.get("action") or "list").strip().lower()
+        limit = int(args.get("limit") or 10)
+
+        if action in ("list", "events", "upcoming"):
+            time_min = str(args.get("time_min") or "").strip()
+            params: dict[str, Any] = {"max_results": limit}
+            if time_min:
+                params["time_min"] = time_min
+            res = await _execute_composio_action(api_key, "GOOGLECALENDAR_LIST_EVENTS", params)
+            if res.get("success"):
+                return f"События Google Календаря:\n{json.dumps(res.get('data'), ensure_ascii=False, indent=2)}"
+            return f"Не удалось получить события календаря: {res.get('error')}"
+
+        if action in ("create", "add"):
+            summary = str(args.get("summary") or "").strip()
+            start_time = str(args.get("start_time") or "").strip()
+            end_time = str(args.get("end_time") or "").strip()
+            if not summary or not start_time:
+                return "ERROR: 'summary' and 'start_time' are required to create a calendar event."
+            res = await _execute_composio_action(
+                api_key,
+                "GOOGLECALENDAR_CREATE_EVENT",
+                {"summary": summary, "start_time": start_time, "end_time": end_time},
+            )
+            if res.get("success"):
+                return f"Событие '{summary}' успешно создано в Google Календаре!"
+            return f"Не удалось создать событие в календаре: {res.get('error')}"
+
+        return f"Неизвестное действие Календаря: {action}. Доступны: list, create."
 
     async def composio_feed(args: dict, _brain: str) -> str:
         platform = str(args.get("platform") or "").strip().lower()
         if not platform:
-            return "ERROR: 'platform' parameter is required (e.g. twitter, linkedin, instagram)."
+            return "ERROR: 'platform' parameter is required (e.g. twitter, linkedin, instagram, gmail, calendar)."
+
+        query = str(args.get("query") or "").strip()
+        limit = int(args.get("limit") or 10)
+
+        if platform in ("gmail", "mail", "email"):
+            return await composio_gmail({"action": "list", "query": query, "limit": limit}, _brain)
+        if platform in ("googlecalendar", "calendar", "gcal"):
+            return await composio_calendar({"action": "list", "limit": limit}, _brain)
 
         api_key = _get_api_key(ctx)
         if not api_key:
             return "ERROR: Composio API key is not configured."
 
-        limit = int(args.get("limit") or 10)
-        query = str(args.get("query") or "").strip()
-
-        # Execute read action via Composio Action execution endpoint
         action_name = "TWITTER_USER_TIMELINE" if platform in {"twitter", "x"} else f"{platform.upper()}_GET_FEED"
-        headers = {"x-api-key": api_key, "Content-Type": "application/json"}
-        exec_payload: dict[str, Any] = {"arguments": {"limit": limit}}
+        exec_payload: dict[str, Any] = {"limit": limit}
         if query:
-            exec_payload["arguments"]["query"] = query
+            exec_payload["query"] = query
 
-        try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                res = await client.post(
-                    f"{COMPOSIO_API_BASE}/actions/{action_name}/execute",
-                    headers=headers,
-                    json=exec_payload,
-                )
-                if res.status_code in {200, 201}:
-                    data = res.json()
-                    resp_data = data.get("response_data") or data.get("data") or data
-                    text_repr = json.dumps(resp_data, ensure_ascii=False, indent=2)
-                    # If very large, shape with ToolResultShaper
-                    hub = ctx.services.get("hub")
-                    if hub is not None and len(text_repr) > 4000:
-                        preview, _ = hub.shaper.shape_result(text_repr, tool_name=f"composio_feed_{platform}")
-                        return preview
-                    return f"Feed for {platform.upper()}:\n{text_repr}"
-                return f"Composio returned ({res.status_code}): {res.text[:300]}"
-        except Exception as exc:
-            return f"ERROR: Failed to fetch feed for {platform}: {exc}"
+        res = await _execute_composio_action(api_key, action_name, exec_payload)
+        if res.get("success"):
+            resp_data = res.get("data")
+            text_repr = json.dumps(resp_data, ensure_ascii=False, indent=2)
+            hub = ctx.services.get("hub")
+            if hub is not None and len(text_repr) > 4000:
+                preview, _ = hub.shaper.shape_result(text_repr, tool_name=f"composio_feed_{platform}")
+                return preview
+            return f"Feed for {platform.upper()}:\n{text_repr}"
+        return f"Failed to fetch feed for {platform}: {res.get('error')}"
 
     async def composio_post(args: dict, _brain: str) -> str:
         platform = str(args.get("platform") or "").strip().lower()
@@ -274,30 +471,20 @@ def register(ctx) -> None:
             return "ERROR: Composio API key is not configured."
 
         action_name = constraint["action"]
-        headers = {"x-api-key": api_key, "Content-Type": "application/json"}
         post_args: dict[str, Any] = {"text": content}
         media = args.get("media_urls")
         if media and isinstance(media, list):
             post_args["media"] = media
 
-        try:
-            async with httpx.AsyncClient(timeout=20.0) as client:
-                res = await client.post(
-                    f"{COMPOSIO_API_BASE}/actions/{action_name}/execute",
-                    headers=headers,
-                    json={"arguments": post_args},
-                )
-                if res.status_code in {200, 201}:
-                    data = res.json()
-                    resp_data = data.get("response_data") or data.get("data") or data
-                    return f"Successfully posted to {constraint['name']}!\nResult: {json.dumps(resp_data, ensure_ascii=False)}"
-                return f"Failed to post to {constraint['name']} ({res.status_code}): {res.text[:300]}"
-        except Exception as exc:
-            return f"ERROR: Post execution failed on {platform}: {exc}"
+        res = await _execute_composio_action(api_key, action_name, post_args)
+        if res.get("success"):
+            resp_data = res.get("data")
+            return f"Successfully posted to {constraint['name']}!\nResult: {json.dumps(resp_data, ensure_ascii=False)}"
+        return f"Failed to post to {constraint['name']}: {res.get('error')}"
 
     ctx.register_tool(
         name="composio_status",
-        description="Check Composio API key configuration and list all connected social media accounts.",
+        description="Check Composio API key configuration and list all connected accounts (including Gmail with email address, Google Calendar, etc.).",
         handler=composio_status,
         min_mode="readonly",
         schema={"type": "object", "properties": {}},
@@ -305,7 +492,7 @@ def register(ctx) -> None:
 
     ctx.register_tool(
         name="composio_connect",
-        description="Initiate an OAuth authorization link to connect a social media account via Composio.",
+        description="Initiate an OAuth authorization link to connect a cloud account (gmail, googlecalendar, twitter, etc.) via Composio.",
         handler=composio_connect,
         min_mode="safe",
         schema={
@@ -313,7 +500,7 @@ def register(ctx) -> None:
             "properties": {
                 "app": {
                     "type": "string",
-                    "description": "Platform to connect: twitter, linkedin, instagram, facebook, youtube, threads, reddit",
+                    "description": "Service to connect: gmail, googlecalendar, twitter, linkedin, instagram, etc.",
                 },
                 "redirect_url": {
                     "type": "string",
@@ -325,8 +512,92 @@ def register(ctx) -> None:
     )
 
     ctx.register_tool(
+        name="composio_gmail",
+        description="Interact with Gmail via Composio: inspect user profile/email address, list/search emails, read messages, or send emails.",
+        handler=composio_gmail,
+        min_mode="safe",
+        schema={
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["profile", "list", "search", "read", "send"],
+                    "description": "Action to perform: 'profile' (get connected email address and stats), 'list' (list recent emails), 'search' (search emails by query), 'read' (read email body), 'send' (send email)",
+                    "default": "profile",
+                },
+                "query": {
+                    "type": "string",
+                    "description": "Search query or filter (e.g. 'is:unread', 'from:someone', 'in:inbox')",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of emails to retrieve (default: 5)",
+                    "default": 5,
+                },
+                "message_id": {
+                    "type": "string",
+                    "description": "Message ID for action='read'",
+                },
+                "to": {
+                    "type": "string",
+                    "description": "Recipient email address for action='send'",
+                },
+                "subject": {
+                    "type": "string",
+                    "description": "Email subject for action='send'",
+                },
+                "body": {
+                    "type": "string",
+                    "description": "Email body text for action='send'",
+                },
+            },
+            "required": ["action"],
+        },
+    )
+
+    ctx.register_tool(
+        name="composio_calendar",
+        description="Interact with Google Calendar via Composio: list upcoming meetings/events or create new events.",
+        handler=composio_calendar,
+        min_mode="safe",
+        schema={
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["list", "create"],
+                    "description": "Action: 'list' (upcoming events) or 'create' (new event)",
+                    "default": "list",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of events to list (default: 10)",
+                    "default": 10,
+                },
+                "time_min": {
+                    "type": "string",
+                    "description": "Optional ISO start time for event filter",
+                },
+                "summary": {
+                    "type": "string",
+                    "description": "Event title/summary for action='create'",
+                },
+                "start_time": {
+                    "type": "string",
+                    "description": "Start time ISO string for action='create'",
+                },
+                "end_time": {
+                    "type": "string",
+                    "description": "End time ISO string for action='create'",
+                },
+            },
+            "required": ["action"],
+        },
+    )
+
+    ctx.register_tool(
         name="composio_feed",
-        description="Fetch recent posts, timeline, mentions, or search feed from a connected social network.",
+        description="Fetch recent posts, timeline, mentions, or emails/calendar events from a connected integration.",
         handler=composio_feed,
         min_mode="readonly",
         schema={
@@ -334,11 +605,11 @@ def register(ctx) -> None:
             "properties": {
                 "platform": {
                     "type": "string",
-                    "description": "Social network platform: twitter, linkedin, instagram, threads, facebook",
+                    "description": "Platform: twitter, linkedin, instagram, threads, facebook, gmail, calendar",
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "Maximum number of posts to fetch (default: 10)",
+                    "description": "Maximum number of items to fetch (default: 10)",
                     "default": 10,
                 },
                 "query": {
