@@ -10,7 +10,7 @@ import secrets
 import sys
 import time
 from typing import Any
-from urllib.parse import quote_plus, urlencode
+from urllib.parse import parse_qs, quote_plus, urlencode, urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import RedirectResponse
@@ -785,6 +785,11 @@ async def initiate_composio_connect(
     }
 
 
+class ExchangeAgensiCodePayload(BaseModel):
+    code_or_url: str = Field(..., description="Authorization code or callback URL from browser")
+    state: str | None = None
+
+
 @router.post("/api/hub/agensi/connect")
 async def initiate_agensi_connect(
     request: Request,
@@ -797,12 +802,35 @@ async def initiate_agensi_connect(
         if now - data.get("created_at", 0) > 900:
             _AGENSI_OAUTH_PENDING.pop(st, None)
 
-    # Compute callback URL
+    base = str(request.base_url).rstrip("/")
+    parsed = urlparse(base)
+    is_https = parsed.scheme == "https"
+    is_localhost = (parsed.hostname or "").lower() in ("localhost", "127.0.0.1")
+
+    # Agensi Dynamic Client Registration strictly enforces RFC 6749:
+    # HTTP is only permitted on loopback (localhost / 127.0.0.1).
+    # All remote hostnames/IPs require HTTPS.
+    valid_redirect_uris = [
+        "http://localhost:7777/api/hub/agensi/callback",
+        "http://127.0.0.1:7777/api/hub/agensi/callback",
+        "urn:ietf:wg:oauth:2.0:oob",
+    ]
+    if is_https:
+        https_cb = f"{base}/api/hub/agensi/callback"
+        if https_cb not in valid_redirect_uris:
+            valid_redirect_uris.insert(0, https_cb)
+
     if redirect_url:
         cb_url = redirect_url
-    else:
-        base = str(request.base_url).rstrip("/")
+    elif is_https:
         cb_url = f"{base}/api/hub/agensi/callback"
+    elif is_localhost:
+        cb_url = f"http://{parsed.netloc}/api/hub/agensi/callback"
+    else:
+        # Remote IP access over plain HTTP (e.g. http://202.71.13.37:7777).
+        # We use http://localhost:7777/api/hub/agensi/callback so Agensi accepts registration.
+        # Works out-of-the-box via SSH port forward or manual code/URL exchange.
+        cb_url = "http://localhost:7777/api/hub/agensi/callback"
 
     # Register with Agensi via Dynamic Client Registration (RFC 7591)
     async with httpx.AsyncClient(timeout=15.0) as client:
@@ -812,7 +840,7 @@ async def initiate_agensi_connect(
                 headers={"Content-Type": "application/json"},
                 json={
                     "client_name": "Jarvis OS",
-                    "redirect_uris": [cb_url],
+                    "redirect_uris": valid_redirect_uris,
                 },
             )
         except Exception as exc:
@@ -907,6 +935,97 @@ async def agensi_oauth_callback(
     return RedirectResponse(url="/#connected=agensi")
 
 
+@router.post("/api/hub/agensi/exchange")
+async def exchange_agensi_code(
+    payload: ExchangeAgensiCodePayload,
+    container: AppContainer = Depends(get_container),
+) -> dict[str, Any]:
+    raw = payload.code_or_url.strip()
+    code = ""
+    state = (payload.state or "").strip()
+
+    if "code=" in raw:
+        try:
+            parsed_q = parse_qs(urlparse(raw).query or raw)
+            code = (parsed_q.get("code") or [""])[0]
+            if not state:
+                state = (parsed_q.get("state") or [""])[0]
+        except Exception:
+            code = raw
+    else:
+        code = raw
+
+    if not code:
+        raise HTTPException(status_code=400, detail="Не найден код авторизации в переданной строке")
+
+    data = None
+    if state and state in _AGENSI_OAUTH_PENDING:
+        data = _AGENSI_OAUTH_PENDING.pop(state)
+    elif _AGENSI_OAUTH_PENDING:
+        latest_key = max(_AGENSI_OAUTH_PENDING.keys(), key=lambda k: _AGENSI_OAUTH_PENDING[k].get("created_at", 0))
+        data = _AGENSI_OAUTH_PENDING.pop(latest_key)
+
+    if not data:
+        raise HTTPException(status_code=400, detail="Сессия авторизации истекла или не найдена. Нажмите 'Sign in via Agensi OAuth' заново.")
+
+    client_id = data["client_id"]
+    verifier = data["verifier"]
+    redirect_uri = data["redirect_uri"]
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        try:
+            token_resp = await client.post(
+                "https://mcp.agensi.io/oauth/token",
+                data={
+                    "grant_type": "authorization_code",
+                    "client_id": client_id,
+                    "code": code,
+                    "redirect_uri": redirect_uri,
+                    "code_verifier": verifier,
+                },
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Ошибка связи с сервером токенов Agensi: {exc}") from exc
+
+        if token_resp.status_code != 200:
+            raise HTTPException(status_code=400, detail=f"Agensi отклонил код авторизации ({token_resp.status_code}): {token_resp.text[:200]}")
+
+        token_data = token_resp.json()
+        access_token = token_data.get("access_token")
+        if not access_token:
+            raise HTTPException(status_code=502, detail="Сервер Agensi не вернул access_token")
+
+    conn = MCPConnection(
+        id="agensi",
+        name="Agensi Skills Marketplace",
+        transport="http",
+        perm="safe",
+        enabled=True,
+        url="https://mcp.agensi.io/mcp",
+        headers={"Authorization": f"Bearer {access_token}"},
+        write_tools=["upload_*", "set_skill_*", "submit_*", "update_*", "buy_*"],
+    )
+    container.hub.connections.upsert(conn)
+    container.hub.mcp_pool.invalidate("agensi")
+    tools = await container.hub.mcp_pool.test_connection(conn)
+    return {
+        "ok": True,
+        "message": f"Agensi успешно авторизован! Доступно инструментов: {len(tools)}",
+        "tools_count": len(tools),
+        "access_token_preview": f"{access_token[:6]}...{access_token[-4:]}" if len(access_token) > 10 else "***",
+    }
+
+
+@router.post("/api/hub/agensi/reset")
+async def reset_agensi(container: AppContainer = Depends(get_container)) -> dict[str, Any]:
+    conn = container.hub.connections.get("agensi")
+    if conn:
+        conn.headers = {}
+        container.hub.connections.upsert(conn)
+        container.hub.mcp_pool.invalidate("agensi")
+    return {"ok": True, "message": "Авторизация Agensi сброшена (включен публичный каталог инструментов)"}
+
+
 @router.get("/api/hub/agensi/status")
 async def get_agensi_status(container: AppContainer = Depends(get_container)) -> dict[str, Any]:
     conn = container.hub.connections.get("agensi")
@@ -922,10 +1041,11 @@ async def get_agensi_status(container: AppContainer = Depends(get_container)) ->
             "url": conn.url,
         }
     except Exception as exc:
+        err_msg = str(exc)
         return {
             "connected": True,
-            "authenticated": has_auth,
-            "error": str(exc),
+            "authenticated": False if "401" in err_msg or "токен" in err_msg else has_auth,
+            "error": err_msg,
             "tools_count": 0,
         }
 

@@ -310,6 +310,18 @@ class ChatRuntime:
                 else None
             )
 
+            # Inform LLM of active MCP tools and integrations so it answers accurately about its abilities
+            if tools:
+                tool_lines = [
+                    "\n# === ACTIVE MCP TOOLS & INTEGRATIONS ===",
+                    "You have direct access to the following tools in this turn:",
+                ]
+                for t in tools:
+                    tname = t.get("name", "")
+                    tdesc = (t.get("description") or "").replace("\n", " ").strip()
+                    tool_lines.append(f"- `{tname}`: {tdesc[:120]}")
+                system_prompt = f"{system_prompt}\n" + "\n".join(tool_lines)
+
             req = EngineRequest(
                 session_id=session_id,
                 brain=brain,

@@ -95,6 +95,9 @@ export function ConnectionsView() {
   // Agensi OAuth State
   const [agensiStatus, setAgensiStatus] = useState<{ connected: boolean; authenticated: boolean; tools_count: number } | null>(null);
   const [agensiConnecting, setAgensiConnecting] = useState(false);
+  const [agensiCodeInput, setAgensiCodeInput] = useState("");
+  const [agensiExchanging, setAgensiExchanging] = useState(false);
+  const [agensiMsg, setAgensiMsg] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   // Stdio MCP Bridge State
   const [mcpConfig, setMcpConfig] = useState<{
@@ -160,15 +163,44 @@ export function ConnectionsView() {
 
   const handleConnectAgensi = async () => {
     setAgensiConnecting(true);
+    setAgensiMsg(null);
     try {
       const res = await api.connectAgensi();
       if (res.auth_url) {
-        window.location.href = res.auth_url;
+        window.open(res.auth_url, "_blank");
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to initiate Agensi OAuth sign-in");
     } finally {
       setAgensiConnecting(false);
+    }
+  };
+
+  const handleExchangeAgensiCode = async () => {
+    if (!agensiCodeInput.trim()) return;
+    setAgensiExchanging(true);
+    setAgensiMsg(null);
+    try {
+      const res = await api.exchangeAgensiCode(agensiCodeInput.trim());
+      setAgensiMsg({ type: "success", text: res.message });
+      setAgensiCodeInput("");
+      await refreshAgensi();
+      await refresh();
+    } catch (err) {
+      setAgensiMsg({ type: "error", text: err instanceof Error ? err.message : "Ошибка привязки кода Agensi" });
+    } finally {
+      setAgensiExchanging(false);
+    }
+  };
+
+  const handleResetAgensi = async () => {
+    try {
+      await api.resetAgensi();
+      setAgensiMsg({ type: "success", text: "Авторизация Agensi сброшена (включен публичный режим)" });
+      await refreshAgensi();
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to reset Agensi");
     }
   };
 
@@ -877,6 +909,86 @@ export function ConnectionsView() {
             )
           )}
         </div>
+
+        {connId === "agensi" && (
+          <div className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/5 p-4 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Sparkles className="h-4 w-4 text-amber-400" />
+                <span className="text-xs font-semibold text-amber-200">Авторизация Agensi (OAuth 2.0 PKCE)</span>
+              </div>
+              {agensiStatus?.authenticated ? (
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex items-center gap-1 rounded bg-emerald-500/20 px-2 py-0.5 text-[11px] font-medium text-emerald-400 border border-emerald-500/30">
+                    <CheckCircle2 className="h-3 w-3" /> Авторизован (OAuth активен)
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => void handleResetAgensi()}
+                    className="rounded border border-zinc-700 bg-zinc-900 px-2 py-0.5 text-[11px] text-zinc-400 hover:text-zinc-200"
+                  >
+                    Сбросить
+                  </button>
+                </div>
+              ) : (
+                <span className="inline-flex items-center gap-1 rounded bg-amber-500/20 px-2 py-0.5 text-[11px] font-medium text-amber-300 border border-amber-500/30">
+                  <AlertTriangle className="h-3 w-3" /> Публичный каталог (требуется вход для вызова навыков)
+                </span>
+              )}
+            </div>
+
+            <p className="text-[11px] text-zinc-400 leading-relaxed">
+              Agensi предоставляет бесплатный просмотр каталога (29 инструментов), но для выполнения навыков требует авторизацию в аккаунте Agensi.
+            </p>
+
+            <div className="grid gap-2.5 sm:grid-cols-2 pt-1">
+              <div className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-3 space-y-2">
+                <p className="text-[11px] font-medium text-zinc-200">Способ 1. Вход в Agensi</p>
+                <p className="text-[10px] text-zinc-400">
+                  Нажмите кнопку ниже. В открывшемся окне войдите в свой аккаунт Agensi и нажмите <b>Allow</b> (Разрешить).
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void handleConnectAgensi()}
+                  disabled={agensiConnecting}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/50 bg-amber-500/20 px-3 py-1.5 text-xs font-medium text-amber-300 hover:bg-amber-500/30 transition disabled:opacity-50"
+                >
+                  <ExternalLink className="h-3.5 w-3.5" />
+                  <span>{agensiConnecting ? "Подготовка..." : "Войти в Agensi (OAuth)"}</span>
+                </button>
+              </div>
+
+              <div className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-3 space-y-2">
+                <p className="text-[11px] font-medium text-zinc-200">Способ 2. Подтверждение ссылки / кода</p>
+                <p className="text-[10px] text-zinc-400">
+                  Если браузер перенаправил на адрес с <code>code=...</code>, скопируйте его и вставьте сюда:
+                </p>
+                <div className="flex gap-1.5">
+                  <input
+                    value={agensiCodeInput}
+                    onChange={(e) => setAgensiCodeInput(e.target.value)}
+                    placeholder="Вставьте URL с code=... или сам код"
+                    className="w-full rounded-md border border-zinc-700 bg-zinc-950 px-2.5 py-1 text-xs text-zinc-100 placeholder:text-zinc-600 font-mono"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void handleExchangeAgensiCode()}
+                    disabled={agensiExchanging || !agensiCodeInput.trim()}
+                    className="shrink-0 rounded-md bg-amber-500 px-2.5 py-1 text-xs font-medium text-zinc-950 hover:bg-amber-400 disabled:opacity-50"
+                  >
+                    {agensiExchanging ? "Привязка..." : "Привязать"}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {agensiMsg && (
+              <div className={`text-xs rounded-md px-3 py-1.5 ${agensiMsg.type === "success" ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" : "bg-rose-500/10 text-rose-400 border border-rose-500/20"}`}>
+                {agensiMsg.text}
+              </div>
+            )}
+          </div>
+        )}
       </form>
 
       {/* Active Connections */}

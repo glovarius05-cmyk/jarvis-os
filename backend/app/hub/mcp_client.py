@@ -144,8 +144,9 @@ class MCPConnectionStore:
             next_list: list[MCPConnection] = []
             for item in existing:
                 if item.id == conn.id:
-                    # Preserve existing encrypted headers/env if caller sent empty dicts on update
-                    if not conn.headers and item.headers:
+                    # Preserve existing encrypted headers/env if caller sent empty dicts on update,
+                    # EXCEPT when explicitly reset or for presets like agensi where empty headers = public mode
+                    if not conn.headers and item.headers and conn.id != "agensi":
                         conn.headers = item.headers
                     if not conn.env and item.env:
                         conn.env = item.env

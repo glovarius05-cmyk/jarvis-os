@@ -411,6 +411,15 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ redirect_url }),
     }),
+  exchangeAgensiCode: (code_or_url: string, state = "") =>
+    requestJson<{ ok: boolean; message: string; tools_count: number; access_token_preview?: string }>("/api/hub/agensi/exchange", {
+      method: "POST",
+      body: JSON.stringify({ code_or_url, state }),
+    }),
+  resetAgensi: () =>
+    requestJson<{ ok: boolean; message: string }>("/api/hub/agensi/reset", {
+      method: "POST",
+    }),
   listBrains: () => requestJson<BrainsResponse>("/api/brains"),
   createBrain: (name: string, activate = true) =>
     requestJson<BrainItem>("/api/brains", {

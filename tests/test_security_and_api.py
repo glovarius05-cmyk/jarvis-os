@@ -133,3 +133,8 @@ def test_chat_file_upload_and_raw_endpoint(client: TestClient) -> None:
     r_agensi = client.get("/api/hub/agensi/status")
     assert r_agensi.status_code == 200
     assert r_agensi.json()["connected"] is False
+
+    # Agensi reset endpoint
+    r_reset = client.post("/api/hub/agensi/reset")
+    assert r_reset.status_code == 200
+    assert r_reset.json()["ok"] is True
