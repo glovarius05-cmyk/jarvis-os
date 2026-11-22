@@ -135,15 +135,6 @@ export function ChatView({
     }
   });
 
-  const { listening: wakeWordListening, supported: wakeWordSupported } = useWakeWord({
-    enabled: wakeWordEnabled,
-    paused: voiceCallOpen,
-    onWake: (trailingUtterance) => {
-      setInitialVoiceUtterance(trailingUtterance || "");
-      setVoiceCallOpen(true);
-    },
-  });
-
   useEffect(() => {
     setProvider(defaultProvider);
     setModel(defaultModel);
@@ -157,6 +148,33 @@ export function ChatView({
       return res.sessions[0]?.id ?? "";
     });
   }, [activeBrain]);
+
+  const handleOpenVoiceCall = useCallback(
+    async (trailingUtterance = "") => {
+      let sid = selectedId;
+      if (!sid) {
+        try {
+          const created = await api.createSession({ brain: activeBrain, title: t("chat.new") });
+          await loadSessions();
+          setSelectedId(created.id);
+          sid = created.id;
+        } catch (e) {
+          console.error("Failed to create session for voice call", e);
+        }
+      }
+      setInitialVoiceUtterance(trailingUtterance);
+      setVoiceCallOpen(true);
+    },
+    [activeBrain, loadSessions, selectedId, t]
+  );
+
+  const { listening: wakeWordListening, supported: wakeWordSupported } = useWakeWord({
+    enabled: wakeWordEnabled,
+    paused: voiceCallOpen,
+    onWake: (trailingUtterance) => {
+      void handleOpenVoiceCall(trailingUtterance || "");
+    },
+  });
 
   const loadMessages = useCallback(async (sid: string) => {
     if (!sid) {
@@ -272,14 +290,14 @@ export function ChatView({
   );
 
   useEffect(() => {
-    if (prevTurnRef.current && !activeTurn && autoSpeak) {
+    if (prevTurnRef.current && !activeTurn && autoSpeak && !voiceCallOpen) {
       const finishedText = prevTurnRef.current.text;
       if (finishedText && finishedText.trim()) {
         void playSpeech("latest", finishedText);
       }
     }
     prevTurnRef.current = activeTurn;
-  }, [activeTurn, autoSpeak, playSpeech]);
+  }, [activeTurn, autoSpeak, playSpeech, voiceCallOpen]);
 
   useEffect(() => {
     return () => {
@@ -852,10 +870,7 @@ export function ChatView({
 
             <button
               type="button"
-              onClick={() => {
-                setInitialVoiceUtterance("");
-                setVoiceCallOpen(true);
-              }}
+              onClick={() => void handleOpenVoiceCall("")}
               title="Начать живой голосовой диалог с Джарвисом в реальном времени"
               className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/50 bg-gradient-to-r from-amber-500/20 via-orange-500/20 to-amber-500/20 px-3 py-1.5 text-xs font-semibold text-amber-300 shadow-sm transition hover:from-amber-500/30 hover:to-orange-500/30 hover:border-amber-400 focus:outline-none"
             >
@@ -1154,7 +1169,7 @@ export function ChatView({
             {/* Quick Live Voice Button */}
             <button
               type="button"
-              onClick={() => setVoiceCallOpen(true)}
+              onClick={() => void handleOpenVoiceCall("")}
               title="Общение голосом в реальном времени (Live Voice)"
               className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-amber-500/40 bg-gradient-to-br from-amber-500/15 to-orange-500/15 text-amber-300 hover:border-amber-400 hover:from-amber-500/25 hover:to-orange-500/25 transition shadow-sm"
             >
@@ -1218,6 +1233,7 @@ export function ChatView({
         onStopTurn={onStop}
         messages={messages}
         t={t}
+        onSessionCreated={(id) => setSelectedId(id)}
       />
     </div>
   );

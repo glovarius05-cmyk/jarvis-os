@@ -129,7 +129,8 @@ export function useWakeWord({
           if (match && typeof match.index === "number") {
             const trailing = transcript.slice(match.index + match[0].length).replace(/^[,.!?\s]+/, "").trim();
 
-            // Trigger wake event
+            // Immediately stop wake word recognizer so VoiceCallModal can take over the mic without audio device conflict
+            stop();
             cooldownRef.current = true;
             playWakeChime();
             setLastWakeTime(Date.now());

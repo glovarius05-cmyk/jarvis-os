@@ -27,9 +27,40 @@ interface VoiceCallModalProps {
   onStopTurn: (sessionId: string) => void;
   messages: MessageItem[];
   t: (key: string) => string;
+  onSessionCreated?: (id: string) => void;
 }
 
 type CallStatus = "idle" | "listening" | "thinking" | "speaking";
+
+// Determine if utterance is just a greeting wake phrase
+function isPureGreeting(text: string): boolean {
+  if (!text) return true;
+  const t = text.trim().toLowerCase().replace(/[.,!?;:()]/g, "").trim();
+  if (!t) return true;
+  const greetings = new Set([
+    "привет",
+    "хай",
+    "салют",
+    "здравствуй",
+    "здравствуйте",
+    "добрый день",
+    "доброе утро",
+    "добрый вечер",
+    "доброй ночи",
+    "эй",
+    "слушай",
+    "hello",
+    "hi",
+    "hey",
+    "джарвис",
+    "jarvis",
+    "привет джарвис",
+    "привет jarvis",
+    "эй джарвис",
+    "hey jarvis",
+  ]);
+  return greetings.has(t);
+}
 
 // Clean markdown syntax from text so TTS reads clean spoken prose
 function cleanSpokenText(text: string): string {
@@ -90,6 +121,7 @@ export function VoiceCallModal({
   onStopTurn,
   messages,
   t,
+  onSessionCreated,
 }: VoiceCallModalProps) {
   const [status, setStatus] = useState<CallStatus>("idle");
   const [handsFree, setHandsFree] = useState(true);
@@ -105,6 +137,7 @@ export function VoiceCallModal({
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSpokenTurnTextRef = useRef<string>("");
+  const prevTurnRef = useRef<LiveTurnState | undefined>(undefined);
   const isSpeakingRef = useRef(false);
   const isListeningRef = useRef(false);
 
@@ -155,7 +188,12 @@ export function VoiceCallModal({
 
       try {
         if (selectedVoice !== "browser") {
-          const res = await api.synthesizeTTS(clean, selectedVoice);
+          // Timeout race at 3.5s so we don't stall in silence if Edge TTS is slow
+          const ttsPromise = api.synthesizeTTS(clean, selectedVoice);
+          const timeoutPromise = new Promise<{ audioUrl?: string }>((resolve) =>
+            setTimeout(() => resolve({}), 3500)
+          );
+          const res = await Promise.race([ttsPromise, timeoutPromise]);
           if (res.audioUrl && isSpeakingRef.current) {
             const audio = new Audio(res.audioUrl);
             audioRef.current = audio;
@@ -180,8 +218,14 @@ export function VoiceCallModal({
               fallbackBrowserSpeak(clean);
             };
 
-            await audio.play();
-            return;
+            try {
+              await audio.play();
+              return;
+            } catch (playErr) {
+              console.warn("Audio play blocked/failed, using speech synthesis fallback:", playErr);
+              fallbackBrowserSpeak(clean);
+              return;
+            }
           }
         }
 
@@ -197,6 +241,7 @@ export function VoiceCallModal({
 
   const fallbackBrowserSpeak = (text: string) => {
     if ("speechSynthesis" in window) {
+      window.speechSynthesis.cancel();
       const utter = new SpeechSynthesisUtterance(text);
       utter.lang = /[а-яА-ЯёЁ]/.test(text) ? "ru-RU" : "en-US";
       utter.rate = 1.05;
@@ -214,7 +259,15 @@ export function VoiceCallModal({
       };
       utter.onerror = () => {
         isSpeakingRef.current = false;
-        setStatus("idle");
+        if (isOpen && handsFree && !isMuted) {
+          setTimeout(() => {
+            if (isOpen && !isSpeakingRef.current) {
+              void startListening();
+            }
+          }, 350);
+        } else {
+          setStatus("idle");
+        }
       };
       window.speechSynthesis.speak(utter);
     } else {
@@ -225,7 +278,7 @@ export function VoiceCallModal({
 
   // Submit recognized user utterance to Jarvis
   const submitUtterance = useCallback(
-    (text: string) => {
+    async (text: string) => {
       const clean = text.trim();
       if (!clean) return;
 
@@ -235,13 +288,26 @@ export function VoiceCallModal({
       setLastUserSpeech(clean);
       setLiveTranscript("");
 
-      const ok = onSend(sessionId, clean, provider, model, runMode);
+      let sid = sessionId;
+      if (!sid) {
+        try {
+          const created = await api.createSession({ brain: activeBrain, title: "Голосовой диалог" });
+          sid = created.id;
+          if (onSessionCreated) {
+            onSessionCreated(sid);
+          }
+        } catch (err) {
+          console.error("Failed to create voice session", err);
+        }
+      }
+
+      const ok = onSend(sid, clean, provider, model, runMode);
       if (!ok) {
         setErrorNotice("Не удалось отправить сообщение. Проверьте подключение к серверу.");
         setStatus("idle");
       }
     },
-    [model, onSend, provider, runMode, sessionId, stopAudio, stopListening]
+    [activeBrain, model, onSend, onSessionCreated, provider, runMode, sessionId, stopAudio, stopListening]
   );
 
   // Start microphone listening
@@ -405,54 +471,71 @@ export function VoiceCallModal({
     }
   };
 
-  // Watch for completed assistant turns to speak them aloud
+  // Keep track of activeTurn and detect when it finishes to speak it aloud
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen) {
+      prevTurnRef.current = undefined;
+      return;
+    }
 
-    // Check if activeTurn just completed
-    if (status === "thinking" && !activeTurn) {
-      // Find the latest assistant message
-      const lastMsg = [...messages].reverse().find((m) => m.role === "assistant");
-      if (lastMsg && lastMsg.content && lastMsg.content !== lastSpokenTurnTextRef.current) {
-        lastSpokenTurnTextRef.current = lastMsg.content;
-        void speakReply(lastMsg.content);
+    if (activeTurn) {
+      // Turn is actively streaming
+      prevTurnRef.current = activeTurn;
+      if (status !== "thinking") {
+        setStatus("thinking");
+      }
+    } else if (prevTurnRef.current) {
+      // activeTurn just transitioned from streaming to completed!
+      const finishedTurn = prevTurnRef.current;
+      prevTurnRef.current = undefined;
+
+      const replyText = finishedTurn.text?.trim();
+      if (replyText && replyText !== lastSpokenTurnTextRef.current) {
+        lastSpokenTurnTextRef.current = replyText;
+        void speakReply(replyText);
+      } else {
+        // Fallback: check messages
+        const lastMsg = [...messages].reverse().find((m) => m.role === "assistant");
+        if (lastMsg && lastMsg.content && lastMsg.content !== lastSpokenTurnTextRef.current) {
+          lastSpokenTurnTextRef.current = lastMsg.content;
+          void speakReply(lastMsg.content);
+        } else {
+          setStatus("idle");
+        }
       }
     }
   }, [activeTurn, isOpen, messages, speakReply, status]);
 
-  // When activeTurn is streaming, show status
-  useEffect(() => {
-    if (isOpen && activeTurn && status !== "thinking") {
-      setStatus("thinking");
-    }
-  }, [activeTurn, isOpen, status]);
-
-  // On open: initialize and start listening or submit initial utterance
+  // On open: initialize and start listening or speak greeting or submit initial utterance
   useEffect(() => {
     if (isOpen) {
       setStatus("idle");
       setErrorNotice(null);
       setLiveTranscript("");
+      lastSpokenTurnTextRef.current = "";
+      prevTurnRef.current = undefined;
 
-      if (initialUtterance && initialUtterance.trim()) {
-        const text = initialUtterance.trim();
+      const trimmed = (initialUtterance || "").trim();
+      if (trimmed && !isPureGreeting(trimmed)) {
+        // User asked a specific question with wake word, e.g. "Привет Jarvis, какая сейчас погода?"
         const tId = setTimeout(() => {
-          submitUtterance(text);
-        }, 250);
+          void submitUtterance(trimmed);
+        }, 300);
+        return () => clearTimeout(tId);
+      } else {
+        // User just said "Привет Jarvis!" or opened voice modal: respond aloud with greeting!
+        // Once playback finishes, speakReply automatically opens mic in hands-free listening mode.
+        const tId = setTimeout(() => {
+          void speakReply("Привет! Я на связи, слушаю вас.");
+        }, 300);
         return () => clearTimeout(tId);
       }
-
-      // Automatically initiate listening after brief modal animation
-      const tId = setTimeout(() => {
-        void startListening();
-      }, 400);
-      return () => clearTimeout(tId);
     } else {
       stopAudio();
       stopListening();
       setStatus("idle");
     }
-  }, [initialUtterance, isOpen, startListening, stopAudio, stopListening, submitUtterance]);
+  }, [initialUtterance, isOpen, speakReply, stopAudio, stopListening, submitUtterance]);
 
   // Interrupt button handler: cuts Jarvis off and listens
   const handleInterrupt = () => {
