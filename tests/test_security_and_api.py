@@ -89,3 +89,42 @@ def test_public_bind_forces_authentication_flow(tmp_path: Path, project_root: Pa
         assert tc.post("/api/auth/login", json={"username": "owner", "password": "wrong-password"}).status_code == 401
         assert tc.post("/api/auth/login", json={"username": "owner", "password": "strong-password-123"}).status_code == 200
         assert tc.get("/api/settings").status_code == 200
+
+
+def test_chat_file_upload_and_raw_endpoint(client: TestClient) -> None:
+    import base64
+    test_content = b"print('Hello from uploaded file!')"
+    b64 = base64.b64encode(test_content).decode("ascii")
+    r = client.post(
+        "/api/chat/upload-base64",
+        json={"filename": "test_script.py", "content_base64": b64, "content_type": "text/x-python"},
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["ok"] is True
+    assert data["filename"] == "test_script.py"
+    assert data["is_text"] is True
+    assert "print('Hello from uploaded file!')" in data["text_content"]
+    assert data["path"].startswith("uploads/")
+
+    # Fetch raw file
+    r_raw = client.get(f"/api/brain/raw?path={data['path']}")
+    assert r_raw.status_code == 200
+    assert r_raw.content == test_content
+
+    # Multipart file upload
+    png_bytes = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+    r2 = client.post(
+        "/api/chat/upload",
+        files={"file": ("screenshot.png", png_bytes, "image/png")},
+    )
+    assert r2.status_code == 200
+    data2 = r2.json()
+    assert data2["ok"] is True
+    assert data2["filename"] == "screenshot.png"
+    assert data2["is_image"] is True
+    assert data2["size"] == len(png_bytes)
+
+    r_raw2 = client.get(f"/api/brain/raw?path={data2['path']}")
+    assert r_raw2.status_code == 200
+    assert r_raw2.content == png_bytes

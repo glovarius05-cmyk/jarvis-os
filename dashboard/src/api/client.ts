@@ -83,6 +83,17 @@ export interface ProvidersResponse {
   secrets_configured: Record<string, boolean>;
 }
 
+export interface FileUploadResult {
+  ok: boolean;
+  filename: string;
+  path: string;
+  size: number;
+  is_image: boolean;
+  is_text: boolean;
+  text_content?: string | null;
+  url: string;
+}
+
 export interface HubToolInfo {
   name: string;
   description: string;
@@ -590,6 +601,25 @@ export const api = {
     requestJson<{ ok: boolean }>("/api/brain/file", {
       method: "PUT",
       body: JSON.stringify({ path, content }),
+    }),
+  uploadChatFile: async (file: File, brain?: string): Promise<FileUploadResult> => {
+    const formData = new FormData();
+    formData.append("file", file);
+    if (brain) formData.append("brain", brain);
+    const res = await fetch("/api/chat/upload", {
+      method: "POST",
+      body: formData,
+    });
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(err || `Upload failed: ${res.statusText}`);
+    }
+    return (await res.json()) as FileUploadResult;
+  },
+  uploadChatFileBase64: (payload: { filename: string; content_base64: string; content_type?: string; brain?: string }) =>
+    requestJson<FileUploadResult>("/api/chat/upload-base64", {
+      method: "POST",
+      body: JSON.stringify(payload),
     }),
   listTasks: () =>
     requestJson<{ brain: string; auto_enabled: boolean; tasks: KanbanTaskInfo[] }>("/api/work/tasks"),

@@ -162,6 +162,13 @@ class VaultManager:
         target.write_text(content, encoding="utf-8")
         return target
 
+    def write_bytes(self, brain_name: str, rel_path: str, data: bytes) -> Path:
+        root = self.brain_path(brain_name)
+        target = safe_resolve(root, rel_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+        return target
+
     def _inspect(self, root: Path) -> BrainInfo:
         note_count = sum(1 for p in root.rglob("*.md") if ".git" not in p.parts)
         return BrainInfo(

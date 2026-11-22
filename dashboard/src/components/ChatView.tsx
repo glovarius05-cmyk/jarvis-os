@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Bot,
+  FileCode,
+  FileSpreadsheet,
+  FileText,
+  Image as ImageIcon,
   Loader2,
   Mic,
   MicOff,
@@ -12,6 +16,7 @@ import {
   User,
   Volume2,
   Wrench,
+  X,
 } from "lucide-react";
 import {
   api,
@@ -22,6 +27,42 @@ import {
 } from "../api/client";
 import type { LiveTurnState } from "../hooks/useChatSocket";
 import { MarkdownText } from "./MarkdownText";
+
+export interface AttachedFileItem {
+  id: string;
+  name: string;
+  size: number;
+  type: string;
+  isImage: boolean;
+  isText: boolean;
+  previewUrl?: string;
+  textContent?: string;
+  uploadedPath?: string;
+  uploading?: boolean;
+  error?: string;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return "0 B";
+  const k = 1024;
+  const sizes = ["B", "KB", "MB", "GB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
+}
+
+function getFileIcon(name: string) {
+  const ext = name.split(".").pop()?.toLowerCase() || "";
+  if (["jpg", "jpeg", "png", "webp", "gif", "svg", "bmp"].includes(ext)) {
+    return <ImageIcon className="h-4 w-4 text-sky-400" />;
+  }
+  if (["py", "js", "ts", "tsx", "jsx", "html", "css", "json", "yaml", "yml", "sh", "sql", "rs", "go"].includes(ext)) {
+    return <FileCode className="h-4 w-4 text-emerald-400" />;
+  }
+  if (["csv", "tsv", "xlsx", "xls"].includes(ext)) {
+    return <FileSpreadsheet className="h-4 w-4 text-amber-400" />;
+  }
+  return <FileText className="h-4 w-4 text-indigo-400" />;
+}
 
 interface ChatViewProps {
   activeBrain: string;
@@ -76,6 +117,10 @@ export function ChatView({
   const [searchQuery, setSearchQuery] = useState("");
   const [searchHits, setSearchHits] = useState<SearchHit[]>([]);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+
+  const [attachedFiles, setAttachedFiles] = useState<AttachedFileItem[]>([]);
+  const [isDragging, setIsDragging] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     setProvider(defaultProvider);
@@ -343,9 +388,136 @@ export function ChatView({
     await startMediaRecorderFallback();
   };
 
+  const handleFilesAdded = useCallback(
+    async (files: FileList | File[]) => {
+      const fileList = Array.from(files);
+      if (fileList.length === 0) return;
+
+      const newItems: AttachedFileItem[] = [];
+
+      for (const file of fileList) {
+        const id = Math.random().toString(36).slice(2) + Date.now().toString(36);
+        const ext = file.name.split(".").pop()?.toLowerCase() || "";
+        const isImage = file.type.startsWith("image/") || ["jpg", "jpeg", "png", "webp", "gif", "svg", "bmp"].includes(ext);
+        const isText =
+          file.type.startsWith("text/") ||
+          [
+            "txt", "md", "py", "js", "ts", "tsx", "jsx", "json", "csv", "tsv",
+            "html", "css", "yaml", "yml", "xml", "sh", "bash", "sql", "log",
+            "env", "toml", "ini", "conf", "rs", "go", "java", "c", "cpp", "h",
+          ].includes(ext);
+
+        const item: AttachedFileItem = {
+          id,
+          name: file.name,
+          size: file.size,
+          type: file.type || "application/octet-stream",
+          isImage,
+          isText,
+          uploading: true,
+        };
+
+        if (isImage) {
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            const dataUrl = e.target?.result as string;
+            setAttachedFiles((prev) =>
+              prev.map((f) => (f.id === id ? { ...f, previewUrl: dataUrl } : f))
+            );
+          };
+          reader.readAsDataURL(file);
+        } else if (isText && file.size < 2 * 1024 * 1024) {
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            const text = e.target?.result as string;
+            setAttachedFiles((prev) =>
+              prev.map((f) => (f.id === id ? { ...f, textContent: text } : f))
+            );
+          };
+          reader.readAsText(file);
+        }
+
+        newItems.push(item);
+      }
+
+      setAttachedFiles((prev) => [...prev, ...newItems]);
+
+      // Upload files asynchronously to Second Brain
+      for (let i = 0; i < fileList.length; i++) {
+        const file = fileList[i];
+        const item = newItems[i];
+        try {
+          const res = await api.uploadChatFile(file, activeBrain);
+          setAttachedFiles((prev) =>
+            prev.map((f) =>
+              f.id === item.id
+                ? {
+                    ...f,
+                    uploadedPath: res.path,
+                    uploading: false,
+                    textContent: f.textContent || res.text_content || undefined,
+                  }
+                : f
+            )
+          );
+        } catch (err) {
+          console.error("Upload error for", file.name, err);
+          setAttachedFiles((prev) =>
+            prev.map((f) =>
+              f.id === item.id
+                ? { ...f, uploading: false, error: err instanceof Error ? err.message : "Upload failed" }
+                : f
+            )
+          );
+        }
+      }
+    },
+    [activeBrain]
+  );
+
+  const handleRemoveAttachment = (id: string) => {
+    setAttachedFiles((prev) => prev.filter((f) => f.id !== id));
+  };
+
+  const handleClearAttachments = () => {
+    setAttachedFiles([]);
+  };
+
+  const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      void handleFilesAdded(e.target.files);
+      e.target.value = "";
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      void handleFilesAdded(e.dataTransfer.files);
+    }
+  };
+
+  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    if (e.clipboardData.files && e.clipboardData.files.length > 0) {
+      e.preventDefault();
+      void handleFilesAdded(e.clipboardData.files);
+    }
+  };
+
   const handleSubmit = async () => {
     const text = draft.trim();
-    if (!text) return;
+    if (!text && attachedFiles.length === 0) return;
     let sid = selectedId;
     if (!sid) {
       const created = await api.createSession({ brain: activeBrain, title: t("chat.new") });
@@ -353,9 +525,36 @@ export function ChatView({
       setSelectedId(sid);
       await loadSessions();
     }
-    const ok = onSend(sid, text, provider, model, runMode);
+
+    let fullContent = text;
+    const fileBlocks: string[] = [];
+
+    for (const f of attachedFiles) {
+      const header = `--- Прикрепленный файл: ${f.name} (${formatBytes(f.size)}) ---`;
+      if (f.isText && f.textContent) {
+        const ext = f.name.split(".").pop() || "";
+        fileBlocks.push(`${header}\n\`\`\`${ext}\n${f.textContent}\n\`\`\`\n--------------------------------------------`);
+      } else if (f.isImage) {
+        const pathInfo = f.uploadedPath ? `[Сохранено в Second Brain: ${f.uploadedPath}]` : `[Изображение прикреплено]`;
+        fileBlocks.push(`${header}\n${pathInfo}\n--------------------------------------------`);
+      } else {
+        const pathInfo = f.uploadedPath ? `[Сохранено в Second Brain: ${f.uploadedPath}]` : `[Файл прикреплен]`;
+        fileBlocks.push(`${header}\n${pathInfo}\n--------------------------------------------`);
+      }
+    }
+
+    if (fileBlocks.length > 0) {
+      if (fullContent) {
+        fullContent = `${fullContent}\n\n${fileBlocks.join("\n\n")}`;
+      } else {
+        fullContent = `Пожалуйста, изучи прикрепленные файлы:\n\n${fileBlocks.join("\n\n")}`;
+      }
+    }
+
+    const ok = onSend(sid, fullContent, provider, model, runMode);
     if (ok) {
       setDraft("");
+      setAttachedFiles([]);
       // Optimistically render user turn while waiting for turn_start
       setMessages((prev) => [
         ...prev,
@@ -363,7 +562,7 @@ export function ChatView({
           id: Date.now(),
           session_id: sid,
           role: "user",
-          content: text,
+          content: fullContent,
           provider,
           model,
           meta: {},
@@ -660,7 +859,7 @@ export function ChatView({
                       </div>
                     )}
                     {isUser ? (
-                      <p className="whitespace-pre-wrap text-sm leading-relaxed">{m.content}</p>
+                      <MarkdownText content={m.content} />
                     ) : (
                       <MarkdownText content={m.content} />
                     )}
@@ -760,8 +959,108 @@ export function ChatView({
         )}
 
         {/* Composer */}
-        <div className="border-t border-zinc-800 bg-zinc-950 px-6 py-4">
+        <div
+          className={`border-t border-zinc-800 bg-zinc-950 px-6 py-4 transition-colors ${
+            isDragging ? "border-amber-500/60 bg-amber-500/10" : ""
+          }`}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+        >
+          {/* Drag Overlay Hint */}
+          {isDragging && (
+            <div className="mx-auto mb-3 max-w-3xl rounded-xl border border-dashed border-amber-500 bg-amber-500/15 py-2.5 text-center text-xs font-medium text-amber-300">
+              📂 {t("chat.dropFiles")}
+            </div>
+          )}
+
+          {/* Attached Files Preview Chips */}
+          {attachedFiles.length > 0 && (
+            <div className="mx-auto mb-3 flex max-w-3xl flex-wrap items-center gap-2 rounded-xl border border-zinc-800/80 bg-zinc-900/70 p-2.5">
+              {attachedFiles.map((att) => (
+                <div
+                  key={att.id}
+                  className={`group relative flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-xs text-zinc-200 shadow-sm transition ${
+                    att.error
+                      ? "border-rose-500/50 bg-rose-950/30 text-rose-300"
+                      : "border-zinc-700/60 bg-zinc-800/80 hover:border-amber-500/50"
+                  }`}
+                >
+                  {att.isImage && att.previewUrl ? (
+                    <img
+                      src={att.previewUrl}
+                      alt={att.name}
+                      className="h-8 w-8 rounded object-cover border border-zinc-700 shrink-0"
+                    />
+                  ) : (
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded bg-zinc-900 border border-zinc-700/60">
+                      {getFileIcon(att.name)}
+                    </div>
+                  )}
+                  <div className="flex flex-col min-w-0 max-w-[170px]">
+                    <span className="truncate font-medium text-zinc-100" title={att.name}>
+                      {att.name}
+                    </span>
+                    <span className="text-[10px] text-zinc-400">
+                      {formatBytes(att.size)}
+                      {att.uploading && " · Загрузка..."}
+                      {att.error && " · Ошибка"}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveAttachment(att.id)}
+                    className="ml-1 rounded-full p-1 text-zinc-400 hover:bg-zinc-700 hover:text-rose-400 transition"
+                    title="Удалить файл"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ))}
+              <div className="ml-auto flex items-center gap-2">
+                <span className="text-[11px] text-zinc-400">
+                  {attachedFiles.length} {t("chat.filesAttached")}
+                </span>
+                <button
+                  type="button"
+                  onClick={handleClearAttachments}
+                  className="flex items-center gap-1 rounded bg-zinc-800 px-2 py-1 text-[11px] text-zinc-400 hover:bg-zinc-700 hover:text-rose-400 transition"
+                  title={t("chat.clearFiles")}
+                >
+                  <Trash2 className="h-3 w-3" />
+                  <span>{t("chat.clearFiles")}</span>
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="mx-auto flex max-w-3xl items-end gap-2">
+            {/* Hidden native file input */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.txt,.md,.json,.csv,.tsv,.py,.js,.ts,.tsx,.jsx,.html,.css,.yaml,.yml,.xml,.sh,.sql,.log,.zip"
+              className="hidden"
+              onChange={handleFileInputChange}
+            />
+
+            {/* Plus / Attach Files Button */}
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              title={t("chat.attachFiles")}
+              className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-zinc-800 bg-zinc-900 text-zinc-300 transition hover:border-amber-500 hover:text-amber-400 hover:bg-zinc-800 active:scale-95"
+            >
+              <Plus className="h-5 w-5" />
+              {attachedFiles.length > 0 && (
+                <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-amber-500 text-[10px] font-bold text-zinc-950">
+                  {attachedFiles.length}
+                </span>
+              )}
+            </button>
+
+            {/* Microphone Button */}
             <button
               type="button"
               onClick={handleMicToggle}
@@ -781,10 +1080,13 @@ export function ChatView({
                 <Mic className="h-4 w-4" />
               )}
             </button>
+
+            {/* Input Textarea */}
             <textarea
               rows={2}
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
+              onPaste={handlePaste}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
@@ -794,6 +1096,8 @@ export function ChatView({
               placeholder={t("chat.placeholder")}
               className="flex-1 resize-none rounded-xl border border-zinc-800 bg-zinc-900 px-3.5 py-2.5 text-sm text-zinc-100 outline-none focus:border-amber-500"
             />
+
+            {/* Send or Stop Button */}
             {activeTurn ? (
               <button
                 onClick={() => onStop(selectedId)}
@@ -805,7 +1109,7 @@ export function ChatView({
             ) : (
               <button
                 onClick={() => void handleSubmit()}
-                disabled={!draft.trim()}
+                disabled={!draft.trim() && attachedFiles.length === 0}
                 className="flex h-11 items-center gap-1.5 rounded-xl bg-amber-500 px-4 text-sm font-medium text-zinc-950 transition hover:bg-amber-400 disabled:opacity-40"
               >
                 <Send className="h-4 w-4" />

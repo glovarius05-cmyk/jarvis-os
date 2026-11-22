@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from app.api.deps import get_container
@@ -241,3 +242,19 @@ def write_brain_file(
     except (ValueError, VaultPathError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"ok": True, "brain": b, "path": payload.path}
+
+
+@router.get("/api/brain/raw")
+def get_brain_raw_file(
+    path: str = Query(..., min_length=1),
+    brain: str | None = Query(default=None),
+    container: AppContainer = Depends(get_container),
+) -> FileResponse:
+    b = _active_brain(container, brain)
+    try:
+        target = safe_resolve(container.vaults.brain_path(b), path)
+    except (ValueError, VaultPathError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+    return FileResponse(target)

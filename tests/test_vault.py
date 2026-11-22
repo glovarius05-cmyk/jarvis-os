@@ -45,3 +45,12 @@ def test_safe_resolve_blocks_traversal_absolute_and_symlinks(tmp_path: Path) -> 
 
     valid = safe_resolve(vault_root, "wiki/architecture.md")
     assert valid == (vault_root / "wiki" / "architecture.md").resolve()
+
+
+def test_vault_write_bytes(tmp_path: Path) -> None:
+    manager = VaultManager(tmp_path / "brains")
+    manager.ensure_brain("TestBrain")
+    data = b"\x89PNG\r\n\x1a\n\x00\x00"
+    p = manager.write_bytes("TestBrain", "uploads/test.png", data)
+    assert p.is_file()
+    assert p.read_bytes() == data
