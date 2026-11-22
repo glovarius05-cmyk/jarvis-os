@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import {
+  AlertTriangle,
   Check,
   CheckCircle2,
   Code2,
@@ -332,9 +333,15 @@ export function ConnectionsView() {
           </div>
           <div className="flex items-center gap-2">
             {composioConfigured ? (
-              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-xs font-medium text-emerald-400">
-                <CheckCircle2 className="h-3 w-3" /> Key Encrypted & Active
-              </span>
+              composioValid ? (
+                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-xs font-medium text-emerald-400">
+                  <CheckCircle2 className="h-3 w-3" /> Key Valid & Active
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 rounded-full bg-rose-500/15 px-2.5 py-0.5 text-xs font-medium text-rose-400">
+                  <AlertTriangle className="h-3 w-3" /> Invalid API Key
+                </span>
+              )
             ) : (
               <span className="rounded-full bg-zinc-800 px-2.5 py-0.5 text-xs text-zinc-400">
                 API Key Not Configured
@@ -362,7 +369,7 @@ export function ConnectionsView() {
               type="password"
               value={composioKey}
               onChange={(e) => setComposioKey(e.target.value)}
-              placeholder={composioConfigured ? "Update Composio API key (comp_...)" : "Enter Composio API key"}
+              placeholder={composioValid ? "Update Composio API key (ak_... or comp_...)" : "Enter Composio Project API key (ak_...)"}
               className="w-full rounded-lg border border-zinc-700 bg-zinc-950 pl-8 pr-3 py-1.5 font-mono text-xs text-zinc-100"
             />
           </div>

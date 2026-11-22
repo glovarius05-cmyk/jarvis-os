@@ -169,7 +169,7 @@ COMPOSIO_BASE = "https://backend.composio.dev/api/v3.1"
 @router.get("/api/hub/composio/status")
 async def get_composio_status(container: AppContainer = Depends(get_container)) -> dict[str, Any]:
     raw_key = container.settings.load().get("composio_api_key") or ""
-    key = str(raw_key).strip()
+    key = str(raw_key).strip().strip('"').strip("'")
     if not key:
         return {"configured": False, "valid": False, "accounts": [], "message": "Composio API key is not configured"}
 
@@ -210,48 +210,59 @@ async def get_composio_status(container: AppContainer = Depends(get_container)) 
         pass
 
     # 2. Fallback to direct REST API
-    try:
-        async with httpx.AsyncClient(timeout=8.0) as client:
-            res = await client.get(
-                f"{COMPOSIO_BASE}/connected_accounts",
-                headers={"x-api-key": key, "Content-Type": "application/json"},
-            )
-            if res.status_code == 200:
-                data = res.json()
-                items = data.get("items") or data.get("connected_accounts") or data.get("data") or []
-                accounts = []
-                for it in items:
-                    app_name = (
-                        it.get("appUniqueId")
-                        or it.get("appName")
-                        or it.get("app")
-                        or it.get("toolkit")
-                        or "unknown"
-                    ).lower()
-                    status = it.get("status", "ACTIVE")
-                    account_id = it.get("id") or it.get("nanoid") or it.get("accountId") or ""
-                    accounts.append({"app": app_name, "status": status, "id": account_id})
-                return {
-                    "configured": True,
-                    "valid": True,
-                    "accounts": accounts,
-                    "message": f"{len(accounts)} accounts connected" if accounts else "Key valid. No accounts connected yet.",
-                }
-            if res.status_code == 401:
-                return {
-                    "configured": True,
-                    "valid": False,
-                    "accounts": [],
-                    "message": "Invalid API key. Please generate a fresh key in app.composio.dev/settings",
-                }
-            return {
-                "configured": True,
-                "valid": False,
-                "accounts": [],
-                "message": f"Composio returned status {res.status_code}: {res.text[:150]}",
-            }
-    except Exception as exc:
-        return {"configured": True, "valid": False, "accounts": [], "message": f"Could not reach Composio: {exc}"}
+    header_variants = [
+        {"x-api-key": key, "Accept": "application/json"},
+        {"x-org-api-key": key, "Accept": "application/json"},
+        {"Authorization": f"Bearer {key}", "Accept": "application/json"},
+    ]
+    last_status = 401
+    last_text = ""
+    for headers in header_variants:
+        try:
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                res = await client.get(
+                    f"{COMPOSIO_BASE}/connected_accounts",
+                    headers=headers,
+                )
+                last_status = res.status_code
+                last_text = res.text
+                if res.status_code == 200:
+                    data = res.json()
+                    items = data.get("items") or data.get("connected_accounts") or data.get("data") or []
+                    accounts = []
+                    for it in items:
+                        app_name = (
+                            it.get("appUniqueId")
+                            or it.get("appName")
+                            or it.get("app")
+                            or it.get("toolkit")
+                            or "unknown"
+                        ).lower()
+                        status = it.get("status", "ACTIVE")
+                        account_id = it.get("id") or it.get("nanoid") or it.get("accountId") or ""
+                        accounts.append({"app": app_name, "status": status, "id": account_id})
+                    return {
+                        "configured": True,
+                        "valid": True,
+                        "accounts": accounts,
+                        "message": f"{len(accounts)} accounts connected" if accounts else "Key valid. No accounts connected yet.",
+                    }
+        except Exception:
+            continue
+
+    if last_status in {401, 403}:
+        return {
+            "configured": True,
+            "valid": False,
+            "accounts": [],
+            "message": "Invalid API key. Please generate a fresh key in app.composio.dev/settings",
+        }
+    return {
+        "configured": True,
+        "valid": False,
+        "accounts": [],
+        "message": f"Composio returned status {last_status}: {last_text[:150]}",
+    }
 
 
 @router.post("/api/hub/composio/connect")
@@ -260,7 +271,7 @@ async def initiate_composio_connect(
     container: AppContainer = Depends(get_container),
 ) -> dict[str, Any]:
     raw_key = container.settings.load().get("composio_api_key") or ""
-    key = str(raw_key).strip()
+    key = str(raw_key).strip().strip('"').strip("'")
     if not key:
         raise HTTPException(status_code=400, detail="Composio API key is not configured in Settings")
 
@@ -302,43 +313,64 @@ async def initiate_composio_connect(
         pass
 
     # 2. Fallback to direct REST API
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            res = await client.post(
-                f"{COMPOSIO_BASE}/connected_accounts/link",
-                headers={"x-api-key": key, "Content-Type": "application/json"},
-                json={"user_id": "default", "auth_config_id": app_name, "redirect_url": redirect_url},
-            )
-            if res.status_code in {200, 201}:
-                data = res.json()
-                auth_url = (
-                    data.get("redirectUrl")
-                    or data.get("connectionUrl")
-                    or data.get("authUrl")
-                    or data.get("url")
-                    or data.get("link")
-                    or ""
+    header_variants = [
+        {"x-api-key": key, "Content-Type": "application/json"},
+        {"x-org-api-key": key, "Content-Type": "application/json"},
+        {"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+    ]
+    last_res_text = ""
+    last_status = 400
+    for headers in header_variants:
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                res = await client.post(
+                    f"{COMPOSIO_BASE}/connected_accounts/link",
+                    headers=headers,
+                    json={"user_id": "default", "auth_config_id": app_name, "callback_url": redirect_url, "redirect_url": redirect_url},
                 )
-                return {"ok": True, "app": app_name, "auth_url": auth_url, "raw": data}
-            # Fallback to direct /connected_accounts
-            res_alt = await client.post(
-                f"{COMPOSIO_BASE}/connected_accounts",
-                headers={"x-api-key": key, "Content-Type": "application/json"},
-                json={"appName": app_name, "redirectUrl": redirect_url},
-            )
-            if res_alt.status_code in {200, 201}:
-                data_alt = res_alt.json()
-                auth_url = (
-                    data_alt.get("redirectUrl")
-                    or data_alt.get("connectionUrl")
-                    or data_alt.get("authUrl")
-                    or data_alt.get("url")
-                    or ""
+                last_status = res.status_code
+                last_res_text = res.text
+                if res.status_code in {200, 201}:
+                    data = res.json()
+                    auth_url = (
+                        data.get("redirectUrl")
+                        or data.get("redirect_url")
+                        or data.get("connectionUrl")
+                        or data.get("authUrl")
+                        or data.get("url")
+                        or data.get("link")
+                        or ""
+                    )
+                    if auth_url:
+                        return {"ok": True, "app": app_name, "auth_url": auth_url, "raw": data}
+
+                # Fallback to direct /connected_accounts
+                res_alt = await client.post(
+                    f"{COMPOSIO_BASE}/connected_accounts",
+                    headers=headers,
+                    json={"appName": app_name, "redirectUrl": redirect_url},
                 )
-                return {"ok": True, "app": app_name, "auth_url": auth_url, "raw": data_alt}
-            raise HTTPException(status_code=res.status_code, detail=f"Composio error: {res.text[:200]}")
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to initiate connection: {exc}")
+                last_status = res_alt.status_code
+                last_res_text = res_alt.text
+                if res_alt.status_code in {200, 201}:
+                    data_alt = res_alt.json()
+                    auth_url = (
+                        data_alt.get("redirectUrl")
+                        or data_alt.get("redirect_url")
+                        or data_alt.get("connectionUrl")
+                        or data_alt.get("authUrl")
+                        or data_alt.get("url")
+                        or ""
+                    )
+                    if auth_url:
+                        return {"ok": True, "app": app_name, "auth_url": auth_url, "raw": data_alt}
+        except Exception:
+            continue
+
+    if last_status in {401, 403}:
+        raise HTTPException(
+            status_code=401,
+            detail="Composio API key is invalid or unauthorized. Please verify your Project API key in app.composio.dev/settings.",
+        )
+    raise HTTPException(status_code=last_status, detail=f"Composio error: {last_res_text[:200]}")
 

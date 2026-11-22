@@ -160,10 +160,16 @@ class SettingsStore:
         return merged
 
     def load(self) -> dict[str, Any]:
-        """Return decrypted settings dictionary."""
+        """Return decrypted settings dictionary with fallback to environment variables."""
         with self._lock:
             raw = self._read_raw()
-            return self._secrets.decrypt_dict_fields(raw, SECRET_FIELDS)
+            decrypted = self._secrets.decrypt_dict_fields(raw, SECRET_FIELDS)
+            for field in SECRET_FIELDS:
+                if not decrypted.get(field):
+                    env_val = os.getenv(field.upper(), "")
+                    if env_val:
+                        decrypted[field] = env_val
+            return decrypted
 
     def load_public(self) -> dict[str, Any]:
         """Return settings safe to expose over HTTP: secret values replaced by boolean presence flags."""
