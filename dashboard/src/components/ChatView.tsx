@@ -9,6 +9,7 @@ import {
   Mic,
   MicOff,
   Plus,
+  Radio,
   Search,
   Send,
   Square,
@@ -27,6 +28,7 @@ import {
 } from "../api/client";
 import type { LiveTurnState } from "../hooks/useChatSocket";
 import { MarkdownText } from "./MarkdownText";
+import { VoiceCallModal } from "./VoiceCallModal";
 
 export interface AttachedFileItem {
   id: string;
@@ -121,6 +123,7 @@ export function ChatView({
   const [attachedFiles, setAttachedFiles] = useState<AttachedFileItem[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [voiceCallOpen, setVoiceCallOpen] = useState(false);
 
   useEffect(() => {
     setProvider(defaultProvider);
@@ -793,6 +796,16 @@ export function ChatView({
               <span>{t("chat.autoSpeak")}</span>
             </button>
 
+            <button
+              type="button"
+              onClick={() => setVoiceCallOpen(true)}
+              title="Начать живой голосовой диалог с Джарвисом в реальном времени"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/50 bg-gradient-to-r from-amber-500/20 via-orange-500/20 to-amber-500/20 px-3 py-1.5 text-xs font-semibold text-amber-300 shadow-sm transition hover:from-amber-500/30 hover:to-orange-500/30 hover:border-amber-400 focus:outline-none"
+            >
+              <Radio className="h-3.5 w-3.5 text-amber-400 animate-pulse" />
+              <span>{t("chat.voiceCall") || "Общение голосом"}</span>
+            </button>
+
             <span className="flex items-center gap-1.5 text-xs text-zinc-400">
               <span className={`h-2 w-2 rounded-full ${wsConnected ? "bg-emerald-400" : "bg-amber-400"}`} />
               {wsConnected ? t("status.wsConnected") : t("status.wsReconnecting")}
@@ -1081,6 +1094,16 @@ export function ChatView({
               )}
             </button>
 
+            {/* Quick Live Voice Button */}
+            <button
+              type="button"
+              onClick={() => setVoiceCallOpen(true)}
+              title="Общение голосом в реальном времени (Live Voice)"
+              className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-amber-500/40 bg-gradient-to-br from-amber-500/15 to-orange-500/15 text-amber-300 hover:border-amber-400 hover:from-amber-500/25 hover:to-orange-500/25 transition shadow-sm"
+            >
+              <Radio className="h-4 w-4 animate-pulse text-amber-400" />
+            </button>
+
             {/* Input Textarea */}
             <textarea
               rows={2}
@@ -1119,6 +1142,22 @@ export function ChatView({
           </div>
         </div>
       </section>
+
+      {/* Interactive Voice Call Dialog */}
+      <VoiceCallModal
+        isOpen={voiceCallOpen}
+        onClose={() => setVoiceCallOpen(false)}
+        activeBrain={activeBrain}
+        provider={provider}
+        model={model}
+        runMode={runMode}
+        sessionId={selectedId}
+        onSend={onSend}
+        activeTurn={activeTurn}
+        onStopTurn={onStop}
+        messages={messages}
+        t={t}
+      />
     </div>
   );
 }
