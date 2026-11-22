@@ -210,56 +210,69 @@ async def get_composio_status(container: AppContainer = Depends(get_container)) 
         pass
 
     # 2. Fallback to direct REST API
+    masked_key = f"{key[:4]}...{key[-4:]}" if len(key) > 8 else "***"
     header_variants = [
         {"x-api-key": key, "Accept": "application/json"},
         {"x-org-api-key": key, "Accept": "application/json"},
         {"Authorization": f"Bearer {key}", "Accept": "application/json"},
     ]
+    urls_to_try = [
+        f"{COMPOSIO_BASE}/connected_accounts",
+        "https://backend.composio.dev/api/v3/connected_accounts",
+    ]
     last_status = 401
     last_text = ""
-    for headers in header_variants:
-        try:
-            async with httpx.AsyncClient(timeout=8.0) as client:
-                res = await client.get(
-                    f"{COMPOSIO_BASE}/connected_accounts",
-                    headers=headers,
-                )
-                last_status = res.status_code
-                last_text = res.text
-                if res.status_code == 200:
-                    data = res.json()
-                    items = data.get("items") or data.get("connected_accounts") or data.get("data") or []
-                    accounts = []
-                    for it in items:
-                        app_name = (
-                            it.get("appUniqueId")
-                            or it.get("appName")
-                            or it.get("app")
-                            or it.get("toolkit")
-                            or "unknown"
-                        ).lower()
-                        status = it.get("status", "ACTIVE")
-                        account_id = it.get("id") or it.get("nanoid") or it.get("accountId") or ""
-                        accounts.append({"app": app_name, "status": status, "id": account_id})
-                    return {
-                        "configured": True,
-                        "valid": True,
-                        "accounts": accounts,
-                        "message": f"{len(accounts)} accounts connected" if accounts else "Key valid. No accounts connected yet.",
-                    }
-        except Exception:
-            continue
+    for url in urls_to_try:
+        for headers in header_variants:
+            try:
+                async with httpx.AsyncClient(timeout=8.0) as client:
+                    res = await client.get(url, headers=headers)
+                    last_status = res.status_code
+                    last_text = res.text
+                    if res.status_code == 200:
+                        data = res.json()
+                        items = data.get("items") or data.get("connected_accounts") or data.get("data") or []
+                        accounts = []
+                        for it in items:
+                            app_name = (
+                                it.get("appUniqueId")
+                                or it.get("appName")
+                                or it.get("app")
+                                or it.get("toolkit")
+                                or "unknown"
+                            ).lower()
+                            status = it.get("status", "ACTIVE")
+                            account_id = it.get("id") or it.get("nanoid") or it.get("accountId") or ""
+                            accounts.append({"app": app_name, "status": status, "id": account_id})
+                        return {
+                            "configured": True,
+                            "valid": True,
+                            "masked_key": masked_key,
+                            "accounts": accounts,
+                            "message": f"{len(accounts)} accounts connected" if accounts else "Key valid. No accounts connected yet.",
+                        }
+            except Exception:
+                continue
 
     if last_status in {401, 403}:
+        detail_msg = ""
+        try:
+            err_json = json.loads(last_text)
+            detail_msg = err_json.get("error", {}).get("message") or err_json.get("message") or ""
+        except Exception:
+            pass
+        msg = f"Composio rejected key ({masked_key}): {detail_msg}" if detail_msg else f"Invalid API key ({masked_key}). Please generate a fresh key in app.composio.dev/settings"
         return {
             "configured": True,
             "valid": False,
+            "masked_key": masked_key,
             "accounts": [],
-            "message": "Invalid API key. Please generate a fresh key in app.composio.dev/settings",
+            "message": msg,
         }
     return {
         "configured": True,
         "valid": False,
+        "masked_key": masked_key,
         "accounts": [],
         "message": f"Composio returned status {last_status}: {last_text[:150]}",
     }

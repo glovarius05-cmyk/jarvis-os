@@ -71,6 +71,7 @@ export function ConnectionsView() {
   const [connectingApp, setConnectingApp] = useState<string | null>(null);
   const [composioAccounts, setComposioAccounts] = useState<Array<{ app: string; status: string; id: string }>>([]);
   const [composioLoading, setComposioLoading] = useState(false);
+  const [composioMaskedKey, setComposioMaskedKey] = useState<string | null>(null);
   const [composioMsg, setComposioMsg] = useState<string | null>(null);
 
   // Stdio MCP Bridge State
@@ -90,6 +91,7 @@ export function ConnectionsView() {
       const st = await api.getComposioStatus();
       setComposioConfigured(st.configured);
       setComposioValid(Boolean(st.valid));
+      setComposioMaskedKey(st.masked_key || null);
       setComposioAccounts(st.accounts || []);
       setComposioMsg(st.message);
     } catch {
@@ -139,6 +141,7 @@ export function ConnectionsView() {
     e.preventDefault();
     if (!composioKey.trim()) return;
     setComposioLoading(true);
+    setComposioMsg("Сохранение ключа и проверка связи с Composio...");
     try {
       await api.patchSettings({ composio_api_key: composioKey.trim() });
       setComposioKey("");
@@ -382,12 +385,19 @@ export function ConnectionsView() {
           </button>
         </form>
 
+        {composioMaskedKey && (
+          <div className="flex items-center gap-2 text-[11px] text-zinc-400">
+            <span>Текущий ключ в системе:</span>
+            <code className="rounded bg-zinc-800 px-1.5 py-0.5 font-mono text-zinc-300">{composioMaskedKey}</code>
+          </div>
+        )}
+
         {composioMsg && (
           <div className={`rounded-lg p-2.5 text-xs ${composioValid ? "bg-zinc-950 text-zinc-400" : "border border-rose-500/30 bg-rose-500/10 text-rose-300"}`}>
             <p>{composioMsg}</p>
             {!composioValid && (
               <p className="mt-1 text-[11px] text-zinc-400">
-                Зайдите на <a href="https://app.composio.dev/settings" target="_blank" rel="noopener noreferrer" className="text-sky-400 underline">app.composio.dev/settings</a>, скопируйте ваш API-ключ (обычно начинается на <code className="text-amber-300 font-mono">ak_</code> или <code className="text-amber-300 font-mono">comp_</code>), вставьте его в поле выше и нажмите <strong>Save Key</strong>.
+                Зайдите на вкладку <a href="https://app.composio.dev/settings" target="_blank" rel="noopener noreferrer" className="text-sky-400 underline font-medium">Dashboard | Agensi (Composio)</a> → <strong>Settings</strong> → <strong>API Keys</strong>, скопируйте ключ (<code className="text-amber-300 font-mono">ak_...</code>), вставьте его в поле выше и нажмите <strong>Save Key</strong>.
               </p>
             )}
           </div>
