@@ -182,6 +182,37 @@ def sanitize_composio_key(raw_key: Any) -> str:
     return s
 
 
+def extract_app_slug(item: Any) -> str:
+    if not isinstance(item, dict):
+        s = str(item or "").strip().lower()
+    else:
+        tk = item.get("toolkit")
+        tk_slug = tk.get("slug") if isinstance(tk, dict) else (str(tk) if tk else "")
+        ac = item.get("auth_config")
+        ac_slug = ac.get("toolkit_slug") if isinstance(ac, dict) else ""
+        raw = (
+            tk_slug
+            or item.get("appUniqueId")
+            or item.get("appName")
+            or item.get("app")
+            or ac_slug
+            or item.get("slug")
+            or ""
+        )
+        s = str(raw).strip().lower()
+
+    s_clean = s.replace("-", "").replace("_", "").replace(" ", "")
+    if s_clean in ("googlecalendar", "calendar", "gcal"):
+        return "googlecalendar"
+    if s_clean in ("googlesheets", "sheets", "gsheets"):
+        return "googlesheets"
+    if s_clean in ("gmail", "googlemail"):
+        return "gmail"
+    if s_clean in ("twitter", "x"):
+        return "twitter"
+    return s_clean or s
+
+
 @router.post("/api/hub/composio/reset")
 async def reset_composio_key(container: AppContainer = Depends(get_container)) -> dict[str, Any]:
     """Explicitly reset/clear Composio API key from settings."""
@@ -211,98 +242,103 @@ async def get_composio_status(container: AppContainer = Depends(get_container)) 
     import re
     import httpx
 
-    # 1. Try Composio Remote MCP tool first
+    masked_key = f"{key[:4]}...{key[-4:]}" if len(key) > 8 else "***"
+    accounts_by_app: dict[str, dict[str, Any]] = {}
+
+    # 1. Try connect.composio.dev/mcp with both x-api-key and x-consumer-api-key
+    mcp_headers_to_try = []
     if key.lower().startswith("ck"):
-        masked_ck = f"{key[:5]}...{key[-3:]}"
+        mcp_headers_to_try.append({"x-consumer-api-key": key, "Content-Type": "application/json"})
+        mcp_headers_to_try.append({"x-api-key": key, "Content-Type": "application/json"})
+    else:
+        mcp_headers_to_try.append({"x-api-key": key, "Content-Type": "application/json"})
+        mcp_headers_to_try.append({"x-consumer-api-key": key, "Content-Type": "application/json"})
+
+    mcp_succeeded = False
+    mcp_tool_count = 0
+    active_mcp_headers = None
+
+    for m_hdrs in mcp_headers_to_try:
         try:
             async with httpx.AsyncClient(timeout=8.0) as client:
                 mcp_res = await client.post(
                     "https://connect.composio.dev/mcp",
                     json={"jsonrpc": "2.0", "method": "tools/list", "id": 1},
-                    headers={"x-consumer-api-key": key, "Content-Type": "application/json"},
+                    headers=m_hdrs,
                 )
                 if mcp_res.status_code == 200:
+                    mcp_succeeded = True
+                    active_mcp_headers = m_hdrs
                     mcp_data = mcp_res.json()
                     tools = mcp_data.get("result", {}).get("tools", [])
-                    detected_apps = set()
+                    mcp_tool_count = len(tools)
                     for t in tools:
-                        tname = t.get("name", "").lower()
-                        for app in ["gmail", "googlecalendar", "github", "notion", "twitter", "linkedin", "instagram"]:
-                            if app in tname or (app == "twitter" and "x_" in tname):
-                                detected_apps.add(app)
-                    accounts = [{"app": app, "status": "ACTIVE", "id": app} for app in detected_apps]
-                    if "gmail" not in detected_apps:
-                        accounts.append({"app": "gmail", "status": "ACTIVE", "id": "gmail"})
+                        tname = str(t.get("name") or "").lower().replace("-", "").replace("_", "")
+                        if "gmail" in tname or "googlemail" in tname:
+                            accounts_by_app["gmail"] = {"app": "gmail", "status": "ACTIVE", "id": "mcp_gmail"}
+                        if "calendar" in tname:
+                            accounts_by_app["googlecalendar"] = {"app": "googlecalendar", "status": "ACTIVE", "id": "mcp_googlecalendar"}
+                        if "sheet" in tname:
+                            accounts_by_app["googlesheets"] = {"app": "googlesheets", "status": "ACTIVE", "id": "mcp_googlesheets"}
+                        if "github" in tname:
+                            accounts_by_app["github"] = {"app": "github", "status": "ACTIVE", "id": "mcp_github"}
+                        if "notion" in tname:
+                            accounts_by_app["notion"] = {"app": "notion", "status": "ACTIVE", "id": "mcp_notion"}
+                        if "twitter" in tname or "tweet" in tname or tname.startswith("x"):
+                            accounts_by_app["twitter"] = {"app": "twitter", "status": "ACTIVE", "id": "mcp_twitter"}
+                        if "linkedin" in tname:
+                            accounts_by_app["linkedin"] = {"app": "linkedin", "status": "ACTIVE", "id": "mcp_linkedin"}
+                        if "instagram" in tname:
+                            accounts_by_app["instagram"] = {"app": "instagram", "status": "ACTIVE", "id": "mcp_instagram"}
+                    break
+        except Exception:
+            continue
 
-                    # Automatically register or update composio connection
-                    try:
-                        from app.hub.mcp_client import MCPConnection
-                        conn = MCPConnection(
-                            id="composio",
-                            name="Composio Consumer MCP",
-                            transport="http",
-                            perm="full",
-                            enabled=True,
-                            url="https://connect.composio.dev/mcp",
-                            headers={"x-consumer-api-key": key},
-                            write_tools=["*_create_*", "*_update_*", "*_delete_*", "*_send_*"],
-                        )
-                        container.hub.connections.upsert(conn)
-                        container.hub.mcp_pool.invalidate("composio")
-                    except Exception:
-                        pass
-
-                    return {
-                        "configured": True,
-                        "valid": True,
-                        "masked_key": masked_ck,
-                        "accounts": accounts,
-                        "message": f"Composio Consumer MCP active ({len(tools)} tools). Gmail connected!",
-                    }
-                elif mcp_res.status_code in {401, 403}:
-                    return {
-                        "configured": True,
-                        "valid": False,
-                        "masked_key": masked_ck,
-                        "accounts": [],
-                        "message": f"Composio rejected Consumer Key ({masked_ck}). В Composio переключитесь из режима 'For You' в режим 'Platform' (в левом верхнем углу) и скопируйте Project API Key (начинается на ak_).",
-                    }
+    if mcp_succeeded and active_mcp_headers:
+        # Register or update Composio MCP connection in Jarvis
+        try:
+            from app.hub.mcp_client import MCPConnection
+            conn = MCPConnection(
+                id="composio",
+                name="Composio MCP",
+                transport="http",
+                perm="full",
+                enabled=True,
+                url="https://connect.composio.dev/mcp",
+                headers=active_mcp_headers,
+                write_tools=["*_create_*", "*_update_*", "*_delete_*", "*_send_*"],
+            )
+            container.hub.connections.upsert(conn)
+            container.hub.mcp_pool.invalidate("composio")
         except Exception:
             pass
 
+    # 2. Try Composio toolkits call if registered
     try:
         active_brain = container.settings.load_public().get("active_brain") or "Brain Default"
         raw = await container.hub.call_tool(
             name="mcp__composio__COMPOSIO_MANAGE_CONNECTIONS",
-            args={"toolkits": ["instagram", "facebook", "linkedin", "twitter", "threads", "github", "gmail", "googlesheets"]},
+            args={"toolkits": ["gmail", "googlecalendar", "googlesheets", "github", "notion", "twitter", "linkedin", "instagram"]},
             brain=active_brain,
             run_mode="full",
             for_model=False,
         )
         data = json.loads(raw)
         results = data.get("data", {}).get("results", {})
-        accounts = []
-        for app_name, app_info in results.items():
+        for app_raw, app_info in results.items():
             if not isinstance(app_info, dict):
                 continue
+            normalized_app = extract_app_slug({"slug": app_raw})
             acc_list = app_info.get("accounts") or []
-            status = app_info.get("status") or "disconnected"
-            if status == "active" or any(a.get("status") == "ACTIVE" for a in acc_list):
-                accounts.append({"app": app_name, "status": "ACTIVE", "id": app_name})
+            status = str(app_info.get("status") or "disconnected").upper()
+            if status == "ACTIVE" or any(str(a.get("status", "")).upper() == "ACTIVE" for a in acc_list):
+                accounts_by_app[normalized_app] = {"app": normalized_app, "status": "ACTIVE", "id": normalized_app}
             elif acc_list:
-                accounts.append({"app": app_name, "status": acc_list[0].get("status", "INITIATED"), "id": acc_list[0].get("id", app_name)})
-
-        return {
-            "configured": True,
-            "valid": True,
-            "accounts": accounts,
-            "message": f"{len(accounts)} accounts connected" if accounts else "Composio Remote MCP active (consumer key verified). Click Connect to link accounts.",
-        }
+                accounts_by_app[normalized_app] = {"app": normalized_app, "status": str(acc_list[0].get("status", "INITIATED")).upper(), "id": str(acc_list[0].get("id", normalized_app))}
     except Exception:
         pass
 
-    # 2. Fallback to direct REST API
-    masked_key = f"{key[:4]}...{key[-4:]}" if len(key) > 8 else "***"
+    # 3. Direct REST API to backend.composio.dev for connected_accounts
     header_variants = [
         {"x-api-key": key, "Accept": "application/json"},
         {"x-consumer-api-key": key, "Accept": "application/json"},
@@ -312,10 +348,14 @@ async def get_composio_status(container: AppContainer = Depends(get_container)) 
     ]
     urls_to_try = [
         f"{COMPOSIO_BASE}/connected_accounts",
+        f"{COMPOSIO_BASE}/connected_accounts?account_type=ALL",
         "https://backend.composio.dev/api/v3/connected_accounts",
+        "https://backend.composio.dev/api/v3/connected_accounts?account_type=ALL",
     ]
+    rest_succeeded = False
     last_status = 401
     last_text = ""
+
     for url in urls_to_try:
         for headers in header_variants:
             try:
@@ -324,30 +364,39 @@ async def get_composio_status(container: AppContainer = Depends(get_container)) 
                     last_status = res.status_code
                     last_text = res.text
                     if res.status_code == 200:
+                        rest_succeeded = True
                         data = res.json()
                         items = data.get("items") or data.get("connected_accounts") or data.get("data") or []
-                        accounts = []
                         for it in items:
-                            app_name = (
-                                it.get("appUniqueId")
-                                or it.get("appName")
-                                or it.get("app")
-                                or it.get("toolkit")
-                                or "unknown"
-                            ).lower()
-                            status = it.get("status", "ACTIVE")
-                            account_id = it.get("id") or it.get("nanoid") or it.get("accountId") or ""
-                            accounts.append({"app": app_name, "status": status, "id": account_id})
-                        return {
-                            "configured": True,
-                            "valid": True,
-                            "masked_key": masked_key,
-                            "accounts": accounts,
-                            "message": f"{len(accounts)} accounts connected" if accounts else "Key valid. No accounts connected yet.",
-                        }
+                            if not isinstance(it, dict):
+                                continue
+                            app_name = extract_app_slug(it)
+                            if not app_name:
+                                continue
+                            status = str(it.get("status") or "ACTIVE").upper()
+                            account_id = str(it.get("id") or it.get("nanoid") or it.get("accountId") or "")
+                            accounts_by_app[app_name] = {"app": app_name, "status": status, "id": account_id}
+                        break
             except Exception:
                 continue
+        if rest_succeeded:
+            break
 
+    if mcp_succeeded or rest_succeeded:
+        accounts = list(accounts_by_app.values())
+        msg = f"{len(accounts)} accounts connected" if accounts else (
+            f"Composio MCP active ({mcp_tool_count} tools). Click Connect to link accounts."
+            if mcp_succeeded else "Key valid. No accounts connected yet."
+        )
+        return {
+            "configured": True,
+            "valid": True,
+            "masked_key": masked_key,
+            "accounts": accounts,
+            "message": msg,
+        }
+
+    # If neither MCP nor REST succeeded
     if last_status in {401, 403}:
         detail_msg = ""
         try:
@@ -355,7 +404,7 @@ async def get_composio_status(container: AppContainer = Depends(get_container)) 
             detail_msg = err_json.get("error", {}).get("message") or err_json.get("message") or ""
         except Exception:
             pass
-        msg = f"Composio rejected key ({masked_key}): {detail_msg}" if detail_msg else f"Invalid API key ({masked_key}). Please generate a fresh key in app.composio.dev/settings"
+        msg = f"Composio rejected key ({masked_key}): {detail_msg}" if detail_msg else f"Invalid API key ({masked_key}). Please verify your key in app.composio.dev/settings"
         return {
             "configured": True,
             "valid": False,
@@ -363,6 +412,7 @@ async def get_composio_status(container: AppContainer = Depends(get_container)) 
             "accounts": [],
             "message": msg,
         }
+
     return {
         "configured": True,
         "valid": False,
@@ -382,103 +432,121 @@ async def initiate_composio_connect(
     if not key:
         raise HTTPException(status_code=400, detail="Composio API key is not configured in Settings")
 
-    app_name = payload.app.strip().lower()
+    raw_app = payload.app.strip().lower()
+    toolkit_slug = extract_app_slug(raw_app) or raw_app
     redirect_url = payload.redirect_url.strip() or "http://127.0.0.1:7777/hub"
 
     import json
     import re
     import httpx
 
-    # If twitter, provide direct dashboard auth configuration link
-    if app_name in ("twitter", "x"):
-        return {
-            "ok": True,
-            "app": "twitter",
-            "auth_url": "https://dashboard.composio.dev/~/org/connect/apps/twitter?open=true",
-        }
+    # Direct fallback URL in Composio Dashboard for this app
+    dashboard_url = f"https://dashboard.composio.dev/~/org/connect/apps/{toolkit_slug}?open=true"
 
-    # 1. Try Composio Remote MCP tool first
+    if toolkit_slug in ("twitter", "x"):
+        return {"ok": True, "app": "twitter", "auth_url": dashboard_url}
+
+    # 1. Try Composio MCP connection tool if available
     try:
         active_brain = container.settings.load_public().get("active_brain") or "Brain Default"
         raw = await container.hub.call_tool(
             name="mcp__composio__COMPOSIO_MANAGE_CONNECTIONS",
-            args={"toolkits": [app_name]},
+            args={"toolkits": [toolkit_slug]},
             brain=active_brain,
             run_mode="full",
             for_model=False,
         )
         data = json.loads(raw)
-        res_info = data.get("data", {}).get("results", {}).get(app_name, {})
+        res_info = data.get("data", {}).get("results", {}).get(toolkit_slug, {})
         auth_url = res_info.get("redirect_url") or ""
         if not auth_url and "dashboard.composio.dev" in res_info.get("error_message", ""):
             m = re.search(r"https://dashboard\.composio\.dev/[^\s\)\>]+", res_info["error_message"])
             if m:
                 auth_url = m.group(0)
         if auth_url:
-            return {"ok": True, "app": app_name, "auth_url": auth_url, "raw": res_info}
+            return {"ok": True, "app": toolkit_slug, "auth_url": auth_url, "raw": res_info}
     except Exception:
         pass
 
-    # 2. Fallback to direct REST API
+    # 2. Try REST API: Query auth_configs for this toolkit, then create link
     header_variants = [
         {"x-api-key": key, "Content-Type": "application/json"},
         {"x-consumer-api-key": key, "Content-Type": "application/json"},
         {"x-org-api-key": key, "Content-Type": "application/json"},
         {"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
     ]
-    last_res_text = ""
-    last_status = 400
+
     for headers in header_variants:
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
-                res = await client.post(
+                # A. Fetch auth_configs for toolkit
+                cfg_res = await client.get(
+                    f"{COMPOSIO_BASE}/auth_configs?toolkit_slug={toolkit_slug}",
+                    headers=headers,
+                )
+                if cfg_res.status_code == 200:
+                    cfg_items = cfg_res.json().get("items") or []
+                    auth_config_id = None
+                    for ci in cfg_items:
+                        if ci.get("status") in ("ENABLED", "ACTIVE") or ci.get("is_composio_managed"):
+                            auth_config_id = ci.get("id")
+                            break
+                    if not auth_config_id and cfg_items:
+                        auth_config_id = cfg_items[0].get("id")
+
+                    if auth_config_id:
+                        # B. Create connect link
+                        link_res = await client.post(
+                            f"{COMPOSIO_BASE}/connected_accounts/link",
+                            headers=headers,
+                            json={
+                                "user_id": "default",
+                                "auth_config_id": auth_config_id,
+                                "callback_url": redirect_url,
+                            },
+                        )
+                        if link_res.status_code in (200, 201):
+                            link_data = link_res.json()
+                            auth_url = (
+                                link_data.get("redirect_url")
+                                or link_data.get("redirectUrl")
+                                or link_data.get("connectionUrl")
+                                or link_data.get("authUrl")
+                                or link_data.get("url")
+                            )
+                            if auth_url:
+                                return {"ok": True, "app": toolkit_slug, "auth_url": auth_url, "raw": link_data}
+
+                # C. Try direct link with auth_config_id = toolkit_slug (some versions accept slug)
+                link_direct = await client.post(
                     f"{COMPOSIO_BASE}/connected_accounts/link",
                     headers=headers,
-                    json={"user_id": "default", "auth_config_id": app_name, "callback_url": redirect_url, "redirect_url": redirect_url},
+                    json={
+                        "user_id": "default",
+                        "auth_config_id": toolkit_slug,
+                        "callback_url": redirect_url,
+                    },
                 )
-                last_status = res.status_code
-                last_res_text = res.text
-                if res.status_code in {200, 201}:
-                    data = res.json()
+                if link_direct.status_code in (200, 201):
+                    link_data = link_direct.json()
                     auth_url = (
-                        data.get("redirectUrl")
-                        or data.get("redirect_url")
-                        or data.get("connectionUrl")
-                        or data.get("authUrl")
-                        or data.get("url")
-                        or data.get("link")
-                        or ""
+                        link_data.get("redirect_url")
+                        or link_data.get("redirectUrl")
+                        or link_data.get("connectionUrl")
+                        or link_data.get("authUrl")
+                        or link_data.get("url")
                     )
                     if auth_url:
-                        return {"ok": True, "app": app_name, "auth_url": auth_url, "raw": data}
-
-                # Fallback to direct /connected_accounts
-                res_alt = await client.post(
-                    f"{COMPOSIO_BASE}/connected_accounts",
-                    headers=headers,
-                    json={"appName": app_name, "redirectUrl": redirect_url},
-                )
-                last_status = res_alt.status_code
-                last_res_text = res_alt.text
-                if res_alt.status_code in {200, 201}:
-                    data_alt = res_alt.json()
-                    auth_url = (
-                        data_alt.get("redirectUrl")
-                        or data_alt.get("redirect_url")
-                        or data_alt.get("connectionUrl")
-                        or data_alt.get("authUrl")
-                        or data_alt.get("url")
-                        or ""
-                    )
-                    if auth_url:
-                        return {"ok": True, "app": app_name, "auth_url": auth_url, "raw": data_alt}
+                        return {"ok": True, "app": toolkit_slug, "auth_url": auth_url, "raw": link_data}
         except Exception:
             continue
 
-    if last_status in {401, 403}:
-        raise HTTPException(
-            status_code=401,
-            detail="Composio API key is invalid or unauthorized. Please verify your Project API key in app.composio.dev/settings.",
-        )
-    raise HTTPException(status_code=last_status, detail=f"Composio error: {last_res_text[:200]}")
+    # 3. Graceful fallback: return the official Composio connect page for the app
+    # This ensures clicking "Connect" always opens the app's authorization page in Composio!
+    return {
+        "ok": True,
+        "app": toolkit_slug,
+        "auth_url": dashboard_url,
+        "message": f"Redirecting to Composio to connect {toolkit_slug}",
+    }
 

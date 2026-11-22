@@ -38,6 +38,15 @@ const SOCIAL_PLATFORMS = [
   { id: "reddit", name: "Reddit", desc: "Subreddit posts, discussions" },
 ];
 
+const normalizePlatformSlug = (slug: string) => {
+  const s = (slug || "").toLowerCase().replace(/[-_\s]/g, "");
+  if (s === "x" || s === "twitter") return "twitter";
+  if (s === "calendar" || s === "gcal" || s === "googlecalendar") return "googlecalendar";
+  if (s === "sheets" || s === "gsheets" || s === "googlesheets") return "googlesheets";
+  if (s === "googlemail" || s === "gmail") return "gmail";
+  return s;
+};
+
 export function ConnectionsView() {
   const [connections, setConnections] = useState<MCPConnectionInfo[]>([]);
   const [tools, setTools] = useState<HubToolInfo[]>([]);
@@ -176,6 +185,8 @@ export function ConnectionsView() {
         const popup = window.open(res.auth_url, "_blank", "noopener,noreferrer");
         if (!popup || popup.closed || typeof popup.closed === "undefined") {
           window.location.href = res.auth_url;
+        } else {
+          setComposioMsg(`Окно подключения для ${appId} открыто. Если окно не появилось, перейдите по ссылке: ${res.auth_url}`);
         }
       } else {
         setComposioMsg(`Could not get authorization URL for ${appId}`);
@@ -431,9 +442,12 @@ export function ConnectionsView() {
         {/* Platform Grid */}
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {SOCIAL_PLATFORMS.map((platform) => {
-            const isConnected = composioAccounts.some(
-              (acc) => acc.app.toLowerCase() === platform.id || (platform.id === "twitter" && acc.app.toLowerCase() === "x")
-            );
+            const isConnected = composioAccounts.some((acc) => {
+              const accSlug = normalizePlatformSlug(acc.app);
+              const targetSlug = normalizePlatformSlug(platform.id);
+              const isActive = !acc.status || ["ACTIVE", "CONNECTED", "READY", "ENABLED"].includes(acc.status.toUpperCase());
+              return accSlug === targetSlug && isActive;
+            });
             return (
               <div
                 key={platform.id}

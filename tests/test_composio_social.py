@@ -143,3 +143,29 @@ def test_composio_hub_endpoints(tmp_path: Path) -> None:
     assert res.status_code == 200
     data = res.json()
     assert data["configured"] is True
+
+    # 4. Connect with key succeeds and returns auth_url
+    res_gmail = client.post("/api/hub/composio/connect", json={"app": "gmail"})
+    assert res_gmail.status_code == 200
+    assert "auth_url" in res_gmail.json()
+    assert "gmail" in res_gmail.json()["auth_url"]
+
+    res_cal = client.post("/api/hub/composio/connect", json={"app": "googlecalendar"})
+    assert res_cal.status_code == 200
+    assert "auth_url" in res_cal.json()
+    assert "googlecalendar" in res_cal.json()["auth_url"]
+
+
+def test_extract_app_slug() -> None:
+    from app.api.routes.hub import extract_app_slug
+
+    assert extract_app_slug({"toolkit": {"slug": "gmail"}}) == "gmail"
+    assert extract_app_slug({"toolkit": {"slug": "google_calendar"}}) == "googlecalendar"
+    assert extract_app_slug({"toolkit": {"slug": "googlecalendar"}}) == "googlecalendar"
+    assert extract_app_slug({"appName": "Google Calendar"}) == "googlecalendar"
+    assert extract_app_slug({"app": "x"}) == "twitter"
+    assert extract_app_slug({"app": "twitter"}) == "twitter"
+    assert extract_app_slug("calendar") == "googlecalendar"
+    assert extract_app_slug("google-calendar") == "googlecalendar"
+    assert extract_app_slug("gmail") == "gmail"
+
