@@ -229,6 +229,44 @@ export function ChatView({
     };
   }, [stopSpeech]);
 
+  const startMediaRecorderFallback = async () => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setDraft((prev) => prev || "Микрофон заблокирован браузером (незащищенный HTTP). Добавьте URL в chrome://flags/#unsafely-treat-insecure-origin-as-secure или используйте Telegram.");
+      setListening(false);
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaStreamRef.current = stream;
+      const mediaRecorder = new MediaRecorder(stream);
+      const chunks: BlobPart[] = [];
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunks.push(e.data);
+      };
+      mediaRecorder.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        mediaStreamRef.current = null;
+        setListening(false);
+        const blob = new Blob(chunks, { type: "audio/webm" });
+        try {
+          const res = await api.transcribeAudio(blob, "mic.webm");
+          if (res.text?.trim()) {
+            setDraft((prev) => (prev ? `${prev} ${res.text.trim()}` : res.text.trim()));
+          }
+        } catch (err) {
+          console.error("STT error", err);
+          setDraft((prev) => prev || "Ошибка распознавания аудио на сервере.");
+        }
+      };
+      mediaRecorder.start();
+      recRef.current = mediaRecorder;
+      setListening(true);
+    } catch {
+      setDraft((prev) => prev || "Микрофон заблокирован браузером (HTTP). Разрешите доступ в chrome://flags или используйте Telegram-бот.");
+      setListening(false);
+    }
+  };
+
   const handleMicToggle = async () => {
     if (listening) {
       const rec = recRef.current as { stop?: () => void } | null;
@@ -245,6 +283,13 @@ export function ChatView({
       return;
     }
 
+    // Check secure context (browsers block mic on http://<ip>:port)
+    const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+    if (!window.isSecureContext && !isLocal) {
+      setDraft((prev) => prev || "Браузер блокирует микрофон по незащищенному HTTP (http://202.71.13.37:7777). Разрешите URL в chrome://flags/#unsafely-treat-insecure-origin-as-secure или используйте Telegram-бот!");
+      return;
+    }
+
     const SpeechRec =
       (window as unknown as Record<string, unknown>).SpeechRecognition ||
       (window as unknown as Record<string, unknown>).webkitSpeechRecognition;
@@ -255,7 +300,7 @@ export function ChatView({
         continuous: boolean;
         interimResults: boolean;
         onresult: ((e: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null;
-        onerror: (() => void) | null;
+        onerror: ((e: { error?: string }) => void) | null;
         onend: (() => void) | null;
         start: () => void;
         stop: () => void;
@@ -279,51 +324,23 @@ export function ChatView({
           setDraft(initialDraft ? `${initialDraft}${sep}${transcript.trim()}` : transcript.trim());
         }
       };
-      rec.onerror = () => setListening(false);
+      rec.onerror = (ev) => {
+        setListening(false);
+        if (ev?.error === "not-allowed" || ev?.error === "network" || ev?.error === "service-not-allowed") {
+          void startMediaRecorderFallback();
+        }
+      };
       rec.onend = () => setListening(false);
       try {
         rec.start();
         setListening(true);
       } catch {
-        setListening(false);
+        void startMediaRecorderFallback();
       }
       return;
     }
 
-    if (navigator.mediaDevices?.getUserMedia) {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        mediaStreamRef.current = stream;
-        const mediaRecorder = new MediaRecorder(stream);
-        const chunks: BlobPart[] = [];
-        mediaRecorder.ondataavailable = (e) => {
-          if (e.data.size > 0) chunks.push(e.data);
-        };
-        mediaRecorder.onstop = async () => {
-          stream.getTracks().forEach((t) => t.stop());
-          mediaStreamRef.current = null;
-          setListening(false);
-          const blob = new Blob(chunks, { type: "audio/webm" });
-          try {
-            const res = await api.transcribeAudio(blob, "mic.webm");
-            if (res.text?.trim()) {
-              setDraft((prev) => (prev ? `${prev} ${res.text.trim()}` : res.text.trim()));
-            }
-          } catch (err) {
-            console.error("STT error", err);
-          }
-        };
-        mediaRecorder.start();
-        recRef.current = mediaRecorder;
-        setListening(true);
-      } catch {
-        setDraft((prev) => prev || "Microphone access denied or unavailable");
-        setListening(false);
-      }
-      return;
-    }
-
-    setDraft((prev) => prev || "Microphone not supported in this browser");
+    await startMediaRecorderFallback();
   };
 
   const handleSubmit = async () => {

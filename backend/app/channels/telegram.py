@@ -166,7 +166,17 @@ class TelegramBotService:
                         if resp.status_code == 200:
                             from app.voice.stt import transcribe_audio_bytes
 
-                            text = await transcribe_audio_bytes(resp.content, suffix=".ogg", language="ru")
+                            cfg = self._settings.load()
+                            try:
+                                text = await transcribe_audio_bytes(
+                                    resp.content,
+                                    suffix=".ogg",
+                                    language="ru",
+                                    openai_key=str(cfg.get("openai_api_key") or ""),
+                                    groq_key=str(cfg.get("groq_api_key") or ""),
+                                )
+                            except TypeError:
+                                text = await transcribe_audio_bytes(resp.content, suffix=".ogg", language="ru")
                             is_voice = True
             except Exception as exc:  # noqa: BLE001
                 self._last_error = f"Voice transcription failed: {exc}"

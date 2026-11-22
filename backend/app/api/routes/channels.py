@@ -99,11 +99,24 @@ async def voice_tts(
 @router.post("/api/voice/stt")
 async def voice_stt(
     file: UploadFile = File(...),
+    container: AppContainer = Depends(get_container),
 ) -> dict[str, str]:
     from pathlib import Path
     from app.voice.stt import transcribe_audio_bytes
 
     data = await file.read()
     suffix = Path(file.filename or "audio.webm").suffix or ".webm"
-    text = await transcribe_audio_bytes(data, suffix=suffix, language="ru")
+    settings = container.settings.load()
+    openai_key = str(settings.get("openai_api_key") or "")
+    groq_key = str(settings.get("groq_api_key") or "")
+    try:
+        text = await transcribe_audio_bytes(
+            data,
+            suffix=suffix,
+            language="ru",
+            openai_key=openai_key,
+            groq_key=groq_key,
+        )
+    except TypeError:
+        text = await transcribe_audio_bytes(data, suffix=suffix, language="ru")
     return {"text": text}
