@@ -78,7 +78,7 @@ export function ConnectionsView() {
   const [composioConfigured, setComposioConfigured] = useState(false);
   const [composioValid, setComposioValid] = useState(false);
   const [connectingApp, setConnectingApp] = useState<string | null>(null);
-  const [composioAccounts, setComposioAccounts] = useState<Array<{ app: string; status: string; id: string }>>([]);
+  const [composioAccounts, setComposioAccounts] = useState<Array<{ app: string; status: string; id: string; email?: string; alias?: string }>>([]);
   const [composioLoading, setComposioLoading] = useState(false);
   const [composioMaskedKey, setComposioMaskedKey] = useState<string | null>(null);
   const [composioMsg, setComposioMsg] = useState<string | null>(null);
@@ -461,12 +461,14 @@ export function ConnectionsView() {
         {/* Platform Grid */}
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {SOCIAL_PLATFORMS.map((platform) => {
-            const isConnected = composioAccounts.some((acc) => {
+            const matchingAcc = composioAccounts.find((acc) => {
               const accSlug = normalizePlatformSlug(acc.app);
               const targetSlug = normalizePlatformSlug(platform.id);
               const isActive = !acc.status || ["ACTIVE", "CONNECTED", "READY", "ENABLED"].includes(acc.status.toUpperCase());
               return accSlug === targetSlug && isActive;
             });
+            const isConnected = !!matchingAcc;
+            const accountDetail = matchingAcc?.email || matchingAcc?.alias;
             return (
               <div
                 key={platform.id}
@@ -486,6 +488,11 @@ export function ConnectionsView() {
                     )}
                   </div>
                   <p className="mt-1 text-[11px] text-zinc-400">{platform.desc}</p>
+                  {accountDetail && (
+                    <p className="mt-1 truncate font-mono text-[10px] text-emerald-400/90" title={accountDetail}>
+                      {accountDetail}
+                    </p>
+                  )}
                 </div>
                 <div className="mt-3 pt-2 border-t border-zinc-800/60 space-y-1.5">
                   <button

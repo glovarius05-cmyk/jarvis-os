@@ -183,3 +183,115 @@ def test_extract_app_slug() -> None:
     assert extract_app_slug("google-calendar") == "googlecalendar"
     assert extract_app_slug("gmail") == "gmail"
 
+
+def test_extract_email_from_account() -> None:
+    from app.api.routes.hub import extract_email_from_obj
+
+    assert extract_email_from_obj({"email": "user@gmail.com"}) == "user@gmail.com"
+    assert extract_email_from_obj({"alias": "my.user@company.com"}) == "my.user@company.com"
+    assert extract_email_from_obj({"account_identifier": "dev@test.org"}) == "dev@test.org"
+    assert extract_email_from_obj({"state": {"val": {"email": "nested@domain.com"}}}) == "nested@domain.com"
+    assert extract_email_from_obj({"params": {"user_email": "params@domain.com"}}) == "params@domain.com"
+    assert extract_email_from_obj({"raw": "random string with bob@customdomain.io inside"}) == "bob@customdomain.io"
+
+
+@pytest.mark.asyncio
+async def test_composio_gmail_and_calendar_tools_action_execution(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import httpx
+
+    code_dir = Path(__file__).resolve().parent.parent
+    ctr = AppContainer.build(
+        code_dir=code_dir,
+        state_dir=tmp_path / "state",
+        brains_dir=tmp_path / "brains",
+    )
+    ctr.settings.update({"composio_api_key": "ak_mock_live_test_key"})
+    hub = ctr.hub
+
+    captured_posts: list[dict] = []
+
+    class MockAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def get(self, url, headers=None):
+            if "connected_accounts" in url:
+                return httpx.Response(
+                    200,
+                    json={
+                        "items": [
+                            {
+                                "id": "ca_test_gmail_12345",
+                                "user_id": "default",
+                                "status": "ACTIVE",
+                                "toolkit": {"slug": "gmail"},
+                                "alias": "metadata_user@gmail.com",
+                            },
+                            {
+                                "id": "ca_test_cal_67890",
+                                "user_id": "default",
+                                "status": "ACTIVE",
+                                "toolkit": {"slug": "googlecalendar"},
+                            },
+                        ]
+                    },
+                )
+            return httpx.Response(404)
+
+        async def post(self, url, headers=None, json=None):
+            captured_posts.append({"url": url, "json": json})
+            if "GMAIL_GET_PROFILE" in url:
+                return httpx.Response(
+                    200,
+                    json={
+                        "response_data": {
+                            "emailAddress": "live_user@gmail.com",
+                            "messagesTotal": 42,
+                            "threadsTotal": 10,
+                        }
+                    },
+                )
+            if "GOOGLECALENDAR_LIST_EVENTS" in url:
+                return httpx.Response(
+                    200,
+                    json={
+                        "response_data": [
+                            {"id": "ev1", "summary": "Team Sync"}
+                        ]
+                    },
+                )
+            return httpx.Response(500)
+
+    monkeypatch.setattr(httpx, "AsyncClient", MockAsyncClient)
+
+    # 1. Profile action fetches live profile and sends connected_account_id
+    res_prof = await hub.call_tool(name="composio_gmail", args={"action": "profile"}, brain="Brain Default", run_mode="safe")
+    assert "live_user@gmail.com" in res_prof
+    assert "42" in res_prof
+
+    # Verify connected_account_id was sent in the payload to Composio
+    profile_calls = [p for p in captured_posts if "GMAIL_GET_PROFILE" in p["url"]]
+    assert len(profile_calls) > 0
+    assert profile_calls[0]["json"].get("connected_account_id") == "ca_test_gmail_12345"
+
+    # 2. Status lists both Gmail (with email) and Calendar
+    res_status = await hub.call_tool(name="composio_status", args={}, brain="Brain Default", run_mode="readonly")
+    assert "GMAIL" in res_status
+    assert "GOOGLECALENDAR" in res_status
+
+    # 3. Calendar list action passes ca_test_cal_67890
+    res_cal = await hub.call_tool(name="composio_calendar", args={"action": "list"}, brain="Brain Default", run_mode="safe")
+    assert "Team Sync" in res_cal
+    cal_calls = [p for p in captured_posts if "GOOGLECALENDAR_LIST_EVENTS" in p["url"]]
+    assert len(cal_calls) > 0
+    assert cal_calls[0]["json"].get("connected_account_id") == "ca_test_cal_67890"
+
+
+
+

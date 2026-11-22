@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import re
 import sys
 from typing import Any
 
@@ -248,6 +250,39 @@ def extract_app_slug(item: Any) -> str:
     return s_clean or s
 
 
+def extract_email_from_obj(it: Any) -> str:
+    """Extract email address from connected account dictionary or structure."""
+    if not isinstance(it, dict):
+        return ""
+    for k in ("email", "user_email", "account_email", "emailAddress", "email_address", "email_id"):
+        v = it.get(k)
+        if isinstance(v, str) and "@" in v:
+            return v.strip()
+    for k in ("alias", "account_identifier", "identifier", "name", "username"):
+        v = it.get(k)
+        if isinstance(v, str) and "@" in v:
+            return v.strip()
+    for parent in ("state", "params", "data", "metadata", "profile", "auth_config", "connection_data"):
+        sub = it.get(parent)
+        if isinstance(sub, dict):
+            val = sub.get("val") if isinstance(sub.get("val"), dict) else sub
+            for k in ("email", "user_email", "account_email", "emailAddress", "email_address", "identifier"):
+                v = val.get(k)
+                if isinstance(v, str) and "@" in v:
+                    return v.strip()
+    try:
+        raw_dump = json.dumps(it)
+        import re
+        matches = re.findall(r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+', raw_dump)
+        for m in matches:
+            low = m.lower()
+            if not any(bad in low for bad in ("composio.dev", "example.com", "schema.org", "sentry.io", "w3.org")):
+                return m
+    except Exception:
+        pass
+    return ""
+
+
 class ComposioConfirmPayload(BaseModel):
     app: str = Field(..., min_length=1, max_length=50)
     connected: bool = Field(default=True)
@@ -404,7 +439,20 @@ async def get_composio_status(container: AppContainer = Depends(get_container)) 
                                     or (bool(accs) and st != "disconnected")
                                 )
                                 if is_active:
-                                    accounts_by_app[norm_slug] = {"app": norm_slug, "status": "ACTIVE", "id": norm_slug}
+                                    ca_id = norm_slug
+                                    email = ""
+                                    for a in accs:
+                                        if isinstance(a, dict):
+                                            c_id = a.get("id") or a.get("nanoid")
+                                            if c_id and str(c_id).startswith("ca_"):
+                                                ca_id = str(c_id)
+                                            e = extract_email_from_obj(a)
+                                            if e:
+                                                email = e
+                                    entry: dict[str, Any] = {"app": norm_slug, "status": "ACTIVE", "id": ca_id}
+                                    if email:
+                                        entry["email"] = email
+                                    accounts_by_app[norm_slug] = entry
                     break
         except Exception:
             continue
@@ -474,8 +522,17 @@ async def get_composio_status(container: AppContainer = Depends(get_container)) 
                                 continue
                             raw_st = str(item.get("status") or "ACTIVE").upper()
                             st = "ACTIVE" if raw_st in ("ACTIVE", "CONNECTED", "READY", "ENABLED", "INITIATED", "INITIALIZED") else raw_st
-                            acc_id = str(item.get("id") or item.get("nanoid") or item.get("accountId") or app_slug)
-                            accounts_by_app[app_slug] = {"app": app_slug, "status": st, "id": acc_id}
+                            raw_id = str(item.get("id") or item.get("nanoid") or item.get("accountId") or "")
+                            email = extract_email_from_obj(item)
+                            alias = str(item.get("alias") or item.get("account_identifier") or "")
+                            existing = accounts_by_app.get(app_slug, {})
+                            acc_id = raw_id or existing.get("id") or app_slug
+                            acc_entry: dict[str, Any] = {"app": app_slug, "status": st, "id": acc_id}
+                            if email or existing.get("email"):
+                                acc_entry["email"] = email or existing.get("email")
+                            if alias or existing.get("alias"):
+                                acc_entry["alias"] = alias or existing.get("alias")
+                            accounts_by_app[app_slug] = acc_entry
             except Exception:
                 continue
 
