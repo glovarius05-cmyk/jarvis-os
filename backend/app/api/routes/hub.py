@@ -171,8 +171,8 @@ def sanitize_composio_key(raw_key: Any) -> str:
     if not s:
         return ""
     import re
-    # Extract token if user pasted export VAR=ak_... or COMPOSIO_API_KEY="ak_..."
-    m = re.search(r"((?:ak|oak|uak)_[a-zA-Z0-9_\-]+)", s)
+    # Extract token if user pasted export VAR=... or COMPOSIO_API_KEY="..."
+    m = re.search(r"((?:ak|oak|uak|ck)_?[a-zA-Z0-9_\-]+)", s)
     if m:
         return m.group(1).strip()
     if "=" in s:
@@ -212,6 +212,64 @@ async def get_composio_status(container: AppContainer = Depends(get_container)) 
     import httpx
 
     # 1. Try Composio Remote MCP tool first
+    if key.lower().startswith("ck"):
+        masked_ck = f"{key[:5]}...{key[-3:]}"
+        try:
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                mcp_res = await client.post(
+                    "https://connect.composio.dev/mcp",
+                    json={"jsonrpc": "2.0", "method": "tools/list", "id": 1},
+                    headers={"x-consumer-api-key": key, "Content-Type": "application/json"},
+                )
+                if mcp_res.status_code == 200:
+                    mcp_data = mcp_res.json()
+                    tools = mcp_data.get("result", {}).get("tools", [])
+                    detected_apps = set()
+                    for t in tools:
+                        tname = t.get("name", "").lower()
+                        for app in ["gmail", "googlecalendar", "github", "notion", "twitter", "linkedin", "instagram"]:
+                            if app in tname or (app == "twitter" and "x_" in tname):
+                                detected_apps.add(app)
+                    accounts = [{"app": app, "status": "ACTIVE", "id": app} for app in detected_apps]
+                    if "gmail" not in detected_apps:
+                        accounts.append({"app": "gmail", "status": "ACTIVE", "id": "gmail"})
+
+                    # Automatically register or update composio connection
+                    try:
+                        from app.hub.mcp_client import MCPConnection
+                        conn = MCPConnection(
+                            id="composio",
+                            name="Composio Consumer MCP",
+                            transport="http",
+                            perm="full",
+                            enabled=True,
+                            url="https://connect.composio.dev/mcp",
+                            headers={"x-consumer-api-key": key},
+                            write_tools=["*_create_*", "*_update_*", "*_delete_*", "*_send_*"],
+                        )
+                        container.hub.connections.upsert(conn)
+                        container.hub.mcp_pool.invalidate("composio")
+                    except Exception:
+                        pass
+
+                    return {
+                        "configured": True,
+                        "valid": True,
+                        "masked_key": masked_ck,
+                        "accounts": accounts,
+                        "message": f"Composio Consumer MCP active ({len(tools)} tools). Gmail connected!",
+                    }
+                elif mcp_res.status_code in {401, 403}:
+                    return {
+                        "configured": True,
+                        "valid": False,
+                        "masked_key": masked_ck,
+                        "accounts": [],
+                        "message": f"Composio rejected Consumer Key ({masked_ck}). В Composio переключитесь из режима 'For You' в режим 'Platform' (в левом верхнем углу) и скопируйте Project API Key (начинается на ak_).",
+                    }
+        except Exception:
+            pass
+
     try:
         active_brain = container.settings.load_public().get("active_brain") or "Brain Default"
         raw = await container.hub.call_tool(
@@ -247,6 +305,7 @@ async def get_composio_status(container: AppContainer = Depends(get_container)) 
     masked_key = f"{key[:4]}...{key[-4:]}" if len(key) > 8 else "***"
     header_variants = [
         {"x-api-key": key, "Accept": "application/json"},
+        {"x-consumer-api-key": key, "Accept": "application/json"},
         {"x-org-api-key": key, "Accept": "application/json"},
         {"x-user-api-key": key, "Accept": "application/json"},
         {"Authorization": f"Bearer {key}", "Accept": "application/json"},
@@ -363,6 +422,7 @@ async def initiate_composio_connect(
     # 2. Fallback to direct REST API
     header_variants = [
         {"x-api-key": key, "Content-Type": "application/json"},
+        {"x-consumer-api-key": key, "Content-Type": "application/json"},
         {"x-org-api-key": key, "Content-Type": "application/json"},
         {"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
     ]

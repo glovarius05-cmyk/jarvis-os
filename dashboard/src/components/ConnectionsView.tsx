@@ -386,7 +386,7 @@ export function ConnectionsView() {
               type="password"
               value={composioKey}
               onChange={(e) => setComposioKey(e.target.value)}
-              placeholder={composioValid ? "Update Composio API key (ak_... or comp_...)" : "Enter Composio Project API key (ak_...)"}
+              placeholder={composioValid ? "Update Composio API key (ak_... or ck_...)" : "Enter Composio key (ak_... or ck_...)"}
               className="w-full rounded-lg border border-zinc-700 bg-zinc-950 pl-8 pr-3 py-1.5 font-mono text-xs text-zinc-100"
             />
           </div>
@@ -422,7 +422,7 @@ export function ConnectionsView() {
             <p>{composioMsg}</p>
             {!composioValid && (
               <p className="mt-1 text-[11px] text-zinc-400">
-                Зайдите в <a href="https://app.composio.dev/settings" target="_blank" rel="noopener noreferrer" className="text-sky-400 underline font-medium">Composio (браузер Comet)</a> → <strong>Settings</strong> → <strong>Project Settings</strong> → <strong>API Keys</strong>, скопируйте Project API Key (<code className="text-amber-300 font-mono">ak_...</code>), вставьте его в поле выше и нажмите <strong>Save Key</strong>.
+                В Composio переключитесь из режима <strong>For You</strong> в режим <strong>Platform</strong> (в левом верхнем углу) → <strong>Settings</strong> → <strong>Project Settings</strong> → <strong>API Keys</strong> (ключ <code className="text-amber-300 font-mono">ak_...</code>), либо вставьте Consumer Key (<code className="text-amber-300 font-mono">ck_...</code>).
               </p>
             )}
           </div>
