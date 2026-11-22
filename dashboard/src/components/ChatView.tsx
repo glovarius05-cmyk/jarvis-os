@@ -27,6 +27,7 @@ import {
   type SessionItem,
 } from "../api/client";
 import type { LiveTurnState } from "../hooks/useChatSocket";
+import { useWakeWord } from "../hooks/useWakeWord";
 import { MarkdownText } from "./MarkdownText";
 import { VoiceCallModal } from "./VoiceCallModal";
 
@@ -124,6 +125,24 @@ export function ChatView({
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [voiceCallOpen, setVoiceCallOpen] = useState(false);
+  const [initialVoiceUtterance, setInitialVoiceUtterance] = useState("");
+
+  const [wakeWordEnabled, setWakeWordEnabled] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("jarvis_wake_word_enabled") === "true";
+    } catch {
+      return false;
+    }
+  });
+
+  const { listening: wakeWordListening, supported: wakeWordSupported } = useWakeWord({
+    enabled: wakeWordEnabled,
+    paused: voiceCallOpen,
+    onWake: (trailingUtterance) => {
+      setInitialVoiceUtterance(trailingUtterance || "");
+      setVoiceCallOpen(true);
+    },
+  });
 
   useEffect(() => {
     setProvider(defaultProvider);
@@ -798,7 +817,45 @@ export function ChatView({
 
             <button
               type="button"
-              onClick={() => setVoiceCallOpen(true)}
+              disabled={!wakeWordSupported}
+              onClick={() => {
+                const next = !wakeWordEnabled;
+                setWakeWordEnabled(next);
+                try {
+                  localStorage.setItem("jarvis_wake_word_enabled", String(next));
+                } catch {}
+              }}
+              title={
+                !wakeWordSupported
+                  ? "Браузер не поддерживает распознавание речи"
+                  : wakeWordEnabled
+                  ? "Ожидание фразы 'Привет Jarvis!' активно (нажмите для выключения)"
+                  : "Включить вызов голосовой фразой 'Привет Jarvis!'"
+              }
+              className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition ${
+                wakeWordEnabled
+                  ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-300"
+                  : "border-zinc-800 bg-zinc-900 text-zinc-400 hover:text-zinc-200"
+              } disabled:opacity-50`}
+            >
+              <span
+                className={`h-2 w-2 rounded-full ${
+                  wakeWordListening
+                    ? "bg-emerald-400 animate-ping"
+                    : wakeWordEnabled
+                    ? "bg-emerald-400"
+                    : "bg-zinc-600"
+                }`}
+              />
+              <span>{wakeWordEnabled ? "👂 'Привет Jarvis!'" : "Команда 'Привет Jarvis!'"}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setInitialVoiceUtterance("");
+                setVoiceCallOpen(true);
+              }}
               title="Начать живой голосовой диалог с Джарвисом в реальном времени"
               className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/50 bg-gradient-to-r from-amber-500/20 via-orange-500/20 to-amber-500/20 px-3 py-1.5 text-xs font-semibold text-amber-300 shadow-sm transition hover:from-amber-500/30 hover:to-orange-500/30 hover:border-amber-400 focus:outline-none"
             >
@@ -1146,12 +1203,16 @@ export function ChatView({
       {/* Interactive Voice Call Dialog */}
       <VoiceCallModal
         isOpen={voiceCallOpen}
-        onClose={() => setVoiceCallOpen(false)}
+        onClose={() => {
+          setVoiceCallOpen(false);
+          setInitialVoiceUtterance("");
+        }}
         activeBrain={activeBrain}
         provider={provider}
         model={model}
         runMode={runMode}
         sessionId={selectedId}
+        initialUtterance={initialVoiceUtterance}
         onSend={onSend}
         activeTurn={activeTurn}
         onStopTurn={onStop}

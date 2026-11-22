@@ -21,6 +21,7 @@ interface VoiceCallModalProps {
   model: string;
   runMode: string;
   sessionId: string;
+  initialUtterance?: string;
   onSend: (sessionId: string, content: string, provider: string, model: string, mode: string) => boolean;
   activeTurn: LiveTurnState | undefined;
   onStopTurn: (sessionId: string) => void;
@@ -83,6 +84,7 @@ export function VoiceCallModal({
   model,
   runMode,
   sessionId,
+  initialUtterance,
   onSend,
   activeTurn,
   onStopTurn,
@@ -425,12 +427,21 @@ export function VoiceCallModal({
     }
   }, [activeTurn, isOpen, status]);
 
-  // On open: initialize and start listening immediately
+  // On open: initialize and start listening or submit initial utterance
   useEffect(() => {
     if (isOpen) {
       setStatus("idle");
       setErrorNotice(null);
       setLiveTranscript("");
+
+      if (initialUtterance && initialUtterance.trim()) {
+        const text = initialUtterance.trim();
+        const tId = setTimeout(() => {
+          submitUtterance(text);
+        }, 250);
+        return () => clearTimeout(tId);
+      }
+
       // Automatically initiate listening after brief modal animation
       const tId = setTimeout(() => {
         void startListening();
@@ -441,7 +452,7 @@ export function VoiceCallModal({
       stopListening();
       setStatus("idle");
     }
-  }, [isOpen, startListening, stopAudio, stopListening]);
+  }, [initialUtterance, isOpen, startListening, stopAudio, stopListening, submitUtterance]);
 
   // Interrupt button handler: cuts Jarvis off and listens
   const handleInterrupt = () => {
