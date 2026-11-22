@@ -31,6 +31,9 @@ class UpsertConnectionPayload(BaseModel):
     args: list[str] = Field(default_factory=list)
     env: dict[str, str] = Field(default_factory=dict)
     write_tools: list[str] = Field(default_factory=list)
+    api_key: str = ""
+    header_name: str = "Authorization"
+    env_var: str = ""
 
 
 @router.post("/hub/mcp")
@@ -122,6 +125,19 @@ def upsert_connection(
     payload: UpsertConnectionPayload,
     container: AppContainer = Depends(get_container),
 ) -> dict[str, Any]:
+    headers = dict(payload.headers)
+    env = dict(payload.env)
+    if payload.api_key:
+        if payload.transport == "http":
+            hdr = payload.header_name or "Authorization"
+            if hdr.lower() == "authorization" and not payload.api_key.lower().startswith("bearer "):
+                headers[hdr] = f"Bearer {payload.api_key}"
+            else:
+                headers[hdr] = payload.api_key
+        elif payload.transport == "stdio":
+            e_var = payload.env_var or f"{payload.id.upper().replace('-', '_')}_API_KEY"
+            env[e_var] = payload.api_key
+
     conn = MCPConnection(
         id=payload.id.strip().lower(),
         name=payload.name.strip(),
@@ -129,10 +145,10 @@ def upsert_connection(
         perm=payload.perm,
         enabled=payload.enabled,
         url=payload.url.strip(),
-        headers=payload.headers,
+        headers=headers,
         command=payload.command.strip(),
         args=payload.args,
-        env=payload.env,
+        env=env,
         write_tools=payload.write_tools,
     )
     try:
@@ -141,6 +157,51 @@ def upsert_connection(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     container.hub.mcp_pool.invalidate(saved.id)
     return saved.to_public_dict()
+
+
+@router.post("/api/hub/connections/test")
+async def test_connection_endpoint(
+    payload: UpsertConnectionPayload,
+    container: AppContainer = Depends(get_container),
+) -> dict[str, Any]:
+    headers = dict(payload.headers)
+    env = dict(payload.env)
+    if payload.api_key:
+        if payload.transport == "http":
+            hdr = payload.header_name or "Authorization"
+            if hdr.lower() == "authorization" and not payload.api_key.lower().startswith("bearer "):
+                headers[hdr] = f"Bearer {payload.api_key}"
+            else:
+                headers[hdr] = payload.api_key
+        elif payload.transport == "stdio":
+            e_var = payload.env_var or f"{payload.id.upper().replace('-', '_')}_API_KEY"
+            env[e_var] = payload.api_key
+
+    conn = MCPConnection(
+        id=payload.id.strip().lower(),
+        name=payload.name.strip(),
+        transport=payload.transport,
+        perm=payload.perm,
+        enabled=payload.enabled,
+        url=payload.url.strip(),
+        headers=headers,
+        command=payload.command.strip(),
+        args=payload.args,
+        env=env,
+        write_tools=payload.write_tools,
+    )
+    try:
+        tools = await container.hub.mcp_pool.test_connection(conn)
+        return {
+            "success": True,
+            "count": len(tools),
+            "tools": [
+                {"name": t.get("name"), "description": t.get("description", "")}
+                for t in tools
+            ],
+        }
+    except Exception as exc:
+        return {"success": False, "error": str(exc)}
 
 
 @router.delete("/api/hub/connections/{conn_id}")

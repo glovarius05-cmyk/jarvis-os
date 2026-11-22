@@ -61,6 +61,10 @@ export function ConnectionsView() {
     default_args?: string[];
     default_perm: "readonly" | "safe" | "full";
     write_tools?: string[];
+    requires_api_key?: boolean;
+    header_name?: string;
+    env_var?: string;
+    api_key_placeholder?: string;
   }>>([]);
   const [previewMode, setPreviewMode] = useState<"suggest" | "auto" | "full">("full");
 
@@ -71,6 +75,11 @@ export function ConnectionsView() {
   const [url, setUrl] = useState("");
   const [command, setCommand] = useState("");
   const [argsText, setArgsText] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const [headerName, setHeaderName] = useState("Authorization");
+  const [envVar, setEnvVar] = useState("");
+  const [isTesting, setIsTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ success: boolean; count?: number; error?: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // Composio Social State
@@ -136,14 +145,22 @@ export function ConnectionsView() {
     default_command?: string;
     default_args?: string[];
     default_perm: "readonly" | "safe" | "full";
+    requires_api_key?: boolean;
+    header_name?: string;
+    env_var?: string;
+    api_key_placeholder?: string;
   }) => {
     setConnId(p.id);
     setName(p.name);
     setTransport(p.transport);
     setPerm(p.default_perm);
     setUrl(p.default_url || "");
-    setCommand(p.default_command || "");
+    setCommand(p.default_command || "npx");
     setArgsText((p.default_args || []).join(" "));
+    if (p.header_name) setHeaderName(p.header_name);
+    if (p.env_var) setEnvVar(p.env_var);
+    setApiKey("");
+    setTestResult(null);
   };
 
   const handleSaveComposioKey = async (e: React.FormEvent) => {
@@ -231,15 +248,49 @@ export function ConnectionsView() {
         url: transport === "http" ? url.trim() : "",
         command: transport === "stdio" ? command.trim() : "",
         args: transport === "stdio" ? argsText.split(" ").filter(Boolean) : [],
+        api_key: apiKey.trim(),
+        header_name: headerName.trim() || "Authorization",
+        env_var: envVar.trim(),
       });
       setConnId("");
       setName("");
       setUrl("");
       setCommand("");
       setArgsText("");
+      setApiKey("");
+      setTestResult(null);
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save connection");
+    }
+  };
+
+  const handleTestConnection = async () => {
+    if (!connId.trim() || (transport === "http" && !url.trim()) || (transport === "stdio" && !command.trim())) {
+      setError("Please specify ID and URL / Command before testing.");
+      return;
+    }
+    setIsTesting(true);
+    setTestResult(null);
+    try {
+      const res = await api.testConnection({
+        id: connId.trim().toLowerCase(),
+        name: name.trim() || connId.trim(),
+        transport,
+        perm,
+        enabled: true,
+        url: transport === "http" ? url.trim() : "",
+        command: transport === "stdio" ? command.trim() : "",
+        args: transport === "stdio" ? argsText.split(" ").filter(Boolean) : [],
+        api_key: apiKey.trim(),
+        header_name: headerName.trim() || "Authorization",
+        env_var: envVar.trim(),
+      });
+      setTestResult(res);
+    } catch (err) {
+      setTestResult({ success: false, error: err instanceof Error ? err.message : "Test connection failed" });
+    } finally {
+      setIsTesting(false);
     }
   };
 
@@ -558,6 +609,11 @@ export function ConnectionsView() {
                     <div className="flex items-center justify-between gap-1.5">
                       <span className="text-xs font-medium text-zinc-200">{cat.name}</span>
                       <div className="flex items-center gap-1">
+                        {cat.requires_api_key && (
+                          <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[9px] font-medium text-amber-300">
+                            Key
+                          </span>
+                        )}
                         <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[9px] font-mono text-zinc-400">
                           {cat.transport}
                         </span>
@@ -621,38 +677,117 @@ export function ConnectionsView() {
           </select>
         </div>
 
+        {/* Authentication via API Key / Bearer Token */}
         {transport === "http" ? (
-          <input
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            placeholder="http://127.0.0.1:8080/mcp"
-            required
-            className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 font-mono text-xs text-zinc-100"
-          />
-        ) : (
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-3">
             <input
-              value={command}
-              onChange={(e) => setCommand(e.target.value)}
-              placeholder="Command (e.g. npx)"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              placeholder="http://127.0.0.1:8080/mcp or https://api.service.com/mcp"
               required
-              className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 font-mono text-xs text-zinc-100"
+              className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 font-mono text-xs text-zinc-100"
             />
-            <input
-              value={argsText}
-              onChange={(e) => setArgsText(e.target.value)}
-              placeholder="Space-separated args"
-              className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 font-mono text-xs text-zinc-100"
-            />
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="sm:col-span-1">
+                <label className="block text-[11px] text-zinc-400 mb-1">Header Type</label>
+                <select
+                  value={headerName}
+                  onChange={(e) => setHeaderName(e.target.value)}
+                  className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-xs text-zinc-100"
+                >
+                  <option value="Authorization">Authorization (Bearer)</option>
+                  <option value="x-api-key">x-api-key</option>
+                  <option value="X-Api-Key">X-Api-Key</option>
+                  <option value="api-key">api-key</option>
+                </select>
+              </div>
+              <div className="sm:col-span-2">
+                <label className="block text-[11px] text-zinc-400 mb-1">API Key / Bearer Token (Fernet-encrypted)</label>
+                <div className="relative">
+                  <Key className="absolute left-2.5 top-2 h-3.5 w-3.5 text-zinc-500" />
+                  <input
+                    type="password"
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                    placeholder="Enter API key or leave blank if public..."
+                    className="w-full rounded-lg border border-zinc-700 bg-zinc-950 pl-8 pr-3 py-1.5 font-mono text-xs text-zinc-100"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <input
+                value={command}
+                onChange={(e) => setCommand(e.target.value)}
+                placeholder="Command (e.g. npx)"
+                required
+                className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 font-mono text-xs text-zinc-100"
+              />
+              <input
+                value={argsText}
+                onChange={(e) => setArgsText(e.target.value)}
+                placeholder="Space-separated args"
+                className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 font-mono text-xs text-zinc-100"
+              />
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <label className="block text-[11px] text-zinc-400 mb-1">Environment Variable Name</label>
+                <input
+                  value={envVar}
+                  onChange={(e) => setEnvVar(e.target.value)}
+                  placeholder="e.g. BRAVE_API_KEY, TAVILY_API_KEY"
+                  className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 font-mono text-xs text-zinc-100"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] text-zinc-400 mb-1">API Key / Secret (Fernet-encrypted)</label>
+                <div className="relative">
+                  <Key className="absolute left-2.5 top-2 h-3.5 w-3.5 text-zinc-500" />
+                  <input
+                    type="password"
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                    placeholder="Enter API key or secret..."
+                    className="w-full rounded-lg border border-zinc-700 bg-zinc-950 pl-8 pr-3 py-1.5 font-mono text-xs text-zinc-100"
+                  />
+                </div>
+              </div>
+            </div>
           </div>
         )}
 
-        <button
-          type="submit"
-          className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500 px-3.5 py-1.5 text-xs font-medium text-zinc-950 hover:bg-amber-400"
-        >
-          <Plus className="h-3.5 w-3.5" /> Save Connection
-        </button>
+        <div className="flex flex-wrap items-center gap-3 pt-2">
+          <button
+            type="submit"
+            className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500 px-3.5 py-1.5 text-xs font-medium text-zinc-950 hover:bg-amber-400"
+          >
+            <Plus className="h-3.5 w-3.5" /> Save Connection
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleTestConnection()}
+            disabled={isTesting}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 px-3.5 py-1.5 text-xs font-medium text-zinc-300 hover:bg-zinc-800 disabled:opacity-50"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${isTesting ? "animate-spin" : ""}`} />
+            {isTesting ? "Testing..." : "Test Connection"}
+          </button>
+          {testResult && (
+            testResult.success ? (
+              <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-400">
+                <CheckCircle2 className="h-3.5 w-3.5" /> Verified ({testResult.count} tools discovered)
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 text-xs text-rose-400 max-w-md truncate" title={testResult.error}>
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0" /> {testResult.error}
+              </span>
+            )
+          )}
+        </div>
       </form>
 
       {/* Active Connections */}

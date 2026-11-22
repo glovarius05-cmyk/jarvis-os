@@ -453,11 +453,25 @@ export const api = {
         default_args?: string[];
         default_perm: "readonly" | "safe" | "full";
         write_tools?: string[];
+        requires_api_key?: boolean;
+        header_name?: string;
+        env_var?: string;
+        api_key_placeholder?: string;
       }>;
     }>("/api/hub/catalog"),
   listConnections: () => requestJson<{ connections: MCPConnectionInfo[] }>("/api/hub/connections"),
   upsertConnection: (payload: Record<string, unknown>) =>
     requestJson<MCPConnectionInfo>("/api/hub/connections", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  testConnection: (payload: Record<string, unknown>) =>
+    requestJson<{
+      success: boolean;
+      count?: number;
+      tools?: Array<{ name: string; description: string }>;
+      error?: string;
+    }>("/api/hub/connections/test", {
       method: "POST",
       body: JSON.stringify(payload),
     }),

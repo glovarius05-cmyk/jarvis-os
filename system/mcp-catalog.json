@@ -8,6 +8,9 @@
       "transport": "http",
       "default_url": "https://api.githubcopilot.com/mcp/",
       "default_perm": "readonly",
+      "requires_api_key": true,
+      "header_name": "Authorization",
+      "api_key_placeholder": "ghp_... or Copilot Bearer token",
       "write_tools": ["create_*", "update_*", "delete_*", "merge_*", "push_*"]
     },
     {
@@ -67,6 +70,34 @@
       "default_command": "npx",
       "default_args": ["-y", "@modelcontextprotocol/server-brave-search"],
       "default_perm": "readonly",
+      "requires_api_key": true,
+      "env_var": "BRAVE_API_KEY",
+      "api_key_placeholder": "BSA...",
+      "write_tools": []
+    },
+    {
+      "id": "context7",
+      "name": "Context7 Documentation MCP",
+      "description": "Query official, version-accurate documentation for 1000+ developer libraries and SDKs.",
+      "transport": "http",
+      "default_url": "https://mcp.context7.com/mcp",
+      "default_perm": "readonly",
+      "requires_api_key": true,
+      "header_name": "x-api-key",
+      "api_key_placeholder": "ctx_...",
+      "write_tools": []
+    },
+    {
+      "id": "tavily",
+      "name": "Tavily AI Search MCP",
+      "description": "AI-optimized web search engine designed for LLM research agents.",
+      "transport": "stdio",
+      "default_command": "npx",
+      "default_args": ["-y", "tavily-mcp@latest"],
+      "default_perm": "readonly",
+      "requires_api_key": true,
+      "env_var": "TAVILY_API_KEY",
+      "api_key_placeholder": "tvly-...",
       "write_tools": []
     },
     {
@@ -105,6 +136,9 @@
       "transport": "http",
       "default_url": "https://connect.composio.dev/mcp",
       "default_perm": "readonly",
+      "requires_api_key": true,
+      "header_name": "x-api-key",
+      "api_key_placeholder": "ak_... or ck_...",
       "write_tools": ["*_create_*", "*_post_*", "*_publish_*", "*_delete_*", "*_send_*", "*_upload_*"]
     }
   ]

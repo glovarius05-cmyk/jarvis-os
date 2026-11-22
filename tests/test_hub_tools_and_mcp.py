@@ -206,3 +206,113 @@ def test_hub_mcp_http_jsonrpc_endpoint_auth_and_mode_enforcement(
         )
         assert r_call.json()["result"]["isError"] is True
         assert "Permission denied" in r_call.json()["result"]["content"][0]["text"]
+
+
+@pytest.mark.asyncio
+async def test_jarvis_mcp_connect_tool_and_test_endpoint(tmp_path: Path, project_root: Path) -> None:
+    captured_requests: list[dict[str, Any]] = []
+
+    def mock_server(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content.decode("utf-8"))
+        captured_requests.append({
+            "url": str(request.url),
+            "headers": dict(request.headers),
+            "body": body,
+        })
+        if body.get("method") == "tools/list":
+            return httpx.Response(
+                200,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": body["id"],
+                    "result": {
+                        "tools": [
+                            {"name": "search_docs", "description": "Search developer documentation", "inputSchema": {"type": "object"}},
+                        ]
+                    },
+                },
+            )
+        return httpx.Response(404)
+
+    ctr = AppContainer.build(
+        code_dir=project_root,
+        state_dir=tmp_path / "state",
+        brains_dir=tmp_path / "brains",
+        force_login=False,
+    )
+    # Patch transport for mock server
+    ctr.hub.mcp_pool._http_transport = httpx.MockTransport(mock_server)
+    app = create_app(ctr)
+
+    with TestClient(app) as tc:
+        # 1. Test connection endpoint with API key
+        test_res = tc.post(
+            "/api/hub/connections/test",
+            json={
+                "id": "context7",
+                "name": "Context7 Docs",
+                "transport": "http",
+                "url": "https://mcp.context7.com/mcp",
+                "api_key": "ctx_secret_key_12345",
+                "header_name": "x-api-key",
+                "perm": "readonly",
+            },
+        )
+        assert test_res.status_code == 200
+        tdata = test_res.json()
+        assert tdata["success"] is True
+        assert tdata["count"] == 1
+        assert tdata["tools"][0]["name"] == "search_docs"
+
+        # Verify x-api-key header was sent
+        assert any(r["headers"].get("x-api-key") == "ctx_secret_key_12345" for r in captured_requests)
+
+    # 2. Call internal tool jarvis_mcp_connect directly
+    res_tool = await ctr.hub.call_tool(
+        name="jarvis_mcp_connect",
+        args={
+            "id": "context7",
+            "name": "Context7 Docs",
+            "transport": "http",
+            "url": "https://mcp.context7.com/mcp",
+            "api_key": "ctx_secret_key_12345",
+            "header_name": "x-api-key",
+            "perm": "safe",
+        },
+        brain="Brain Default",
+        run_mode="safe",
+    )
+    assert "успешно подключен и сохранен" in res_tool
+    assert "mcp__context7__search_docs" in res_tool
+
+    # 3. Connection is stored with Fernet encryption
+    saved_conns = ctr.hub.connections.list_connections()
+    c7 = next((c for c in saved_conns if c.id == "context7"), None)
+    assert c7 is not None
+    assert c7.headers.get("x-api-key") == "ctx_secret_key_12345"
+
+    # Raw on-disk JSON has encrypted header
+    raw_disk = json.loads((tmp_path / "state" / "mcp_servers.json").read_text(encoding="utf-8"))
+    c7_raw = next(c for c in raw_disk if c["id"] == "context7")
+    assert c7_raw["headers"]["x-api-key"].startswith("enc:")
+
+    # 4. Tool test via jarvis_connections
+    res_test = await ctr.hub.call_tool(
+        name="jarvis_connections",
+        args={"action": "test", "conn_id": "context7"},
+        brain="Brain Default",
+        run_mode="readonly",
+    )
+    assert "успешна" in res_test
+    assert "search_docs" in res_test
+
+    # 5. Delete connection via jarvis_connections
+    res_del = await ctr.hub.call_tool(
+        name="jarvis_connections",
+        args={"action": "delete", "conn_id": "context7"},
+        brain="Brain Default",
+        run_mode="readonly",
+    )
+    assert "успешно удалено" in res_del
+    assert len(ctr.hub.connections.list_connections()) == 0
+

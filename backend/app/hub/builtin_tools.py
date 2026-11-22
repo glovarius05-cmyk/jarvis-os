@@ -7,6 +7,8 @@ these exact same tools under the exact same permission matrix.
 from __future__ import annotations
 
 import ipaddress
+import json
+from pathlib import Path
 import re
 import socket
 from dataclasses import dataclass
@@ -104,6 +106,8 @@ def build_builtin_tools(
     vaults: VaultManager,
     result_store: ToolResultStore,
     list_connections_fn: Callable[[], list[dict[str, Any]]],
+    connections_store: Any | None = None,
+    mcp_pool: Any | None = None,
     http_transport: httpx.AsyncBaseTransport | None = None,
     router_getter: Callable[[], Any] | None = None,
     experience_getter: Callable[[], Any] | None = None,
@@ -314,15 +318,176 @@ def build_builtin_tools(
             limit=int(args.get("limit") or 20),
         )
 
-    async def jarvis_connections(_args: dict[str, Any], _brain: str) -> str:
+    async def jarvis_connections(args: dict[str, Any], _brain: str) -> str:
+        action = str(args.get("action") or "list").strip().lower()
+        target_id = str(args.get("conn_id") or args.get("id") or "").strip().lower()
+
+        if action in ("delete", "remove", "disconnect") and target_id:
+            if connections_store is None:
+                return "ERROR: Connection store is not available."
+            deleted = connections_store.delete(target_id)
+            if mcp_pool is not None:
+                mcp_pool.invalidate(target_id)
+            if deleted:
+                return f"MCP-соединение '{target_id}' успешно удалено."
+            return f"MCP-соединение '{target_id}' не найдено."
+
+        if action == "test" and target_id:
+            if connections_store is None or mcp_pool is None:
+                return "ERROR: MCP client pool is not available."
+            conn = connections_store.get(target_id)
+            if not conn:
+                return f"ERROR: MCP-соединение '{target_id}' не найдено."
+            try:
+                raw_tools = await mcp_pool.test_connection(conn)
+                return (
+                    f"Проверка подключения '{target_id}' успешна!\n"
+                    f"- Статус: активен\n"
+                    f"- Найдено инструментов: {len(raw_tools)}\n"
+                    f"- Доступные команды: {', '.join(t.get('name', '') for t in raw_tools[:8])}"
+                )
+            except Exception as ex:
+                return f"Ошибка при проверке MCP-соединения '{target_id}': {ex}"
+
         conns = list_connections_fn()
         if not conns:
-            return "No external MCP connections configured yet. Add them on the Connections page."
+            return "Внешние MCP-соединения пока не настроены. Используйте 'jarvis_mcp_connect' для подключения."
         lines = [
             f"- {c['id']} ({c['name']}): transport={c['transport']}, perm={c['perm']}, enabled={c['enabled']}"
             for c in conns
         ]
         return "\n".join(lines)
+
+    async def jarvis_mcp_connect(args: dict[str, Any], _brain: str) -> str:
+        if connections_store is None:
+            return "ERROR: MCP connection store is not available."
+
+        conn_id = str(args.get("id") or "").strip().lower()
+        if not conn_id:
+            return "ERROR: 'id' parameter is required (e.g. 'brave-search', 'context7', 'github', 'custom-mcp')."
+
+        conn_id = re.sub(r"[^a-z0-9_-]", "-", conn_id)
+
+        name = str(args.get("name") or "").strip() or conn_id.replace("-", " ").title()
+        transport = str(args.get("transport") or "").strip().lower()
+        url = str(args.get("url") or "").strip()
+        api_key = str(args.get("api_key") or args.get("token") or args.get("key") or "").strip()
+        header_name = str(args.get("header_name") or "").strip()
+        command = str(args.get("command") or "").strip()
+        cmd_args = args.get("args") if isinstance(args.get("args"), list) else []
+        env_var = str(args.get("env_var") or "").strip()
+        perm = str(args.get("perm") or "safe").strip().lower()
+        if perm not in ("readonly", "safe", "full"):
+            perm = "safe"
+
+        # Catalog preset lookup if preset matches
+        code_dir = Path(__file__).resolve().parent.parent.parent
+        cat_path = code_dir / "system" / "mcp-catalog.json"
+        if cat_path.exists():
+            try:
+                cdata = json.loads(cat_path.read_text(encoding="utf-8"))
+                for cat in cdata.get("connectors", []):
+                    cid = str(cat.get("id") or "").lower()
+                    if cid == conn_id or conn_id in cid or cid in conn_id:
+                        if not transport and cat.get("transport"):
+                            transport = cat["transport"]
+                        if not url and cat.get("default_url"):
+                            url = cat["default_url"]
+                        if not command and cat.get("default_command"):
+                            command = cat["default_command"]
+                        if not cmd_args and cat.get("default_args"):
+                            cmd_args = cat["default_args"]
+                        if not env_var and cat.get("env_var"):
+                            env_var = cat["env_var"]
+                        if not header_name and cat.get("header_name"):
+                            header_name = cat["header_name"]
+                        if name == conn_id.replace("-", " ").title() and cat.get("name"):
+                            name = cat["name"]
+                        break
+            except Exception:
+                pass
+
+        if not header_name:
+            header_name = "Authorization"
+        if not transport:
+            transport = "http" if (url or not command) else "stdio"
+
+        headers: dict[str, str] = {}
+        env: dict[str, str] = {}
+
+        if transport == "http":
+            if not url:
+                return f"ERROR: 'url' is required for HTTP MCP server '{conn_id}'."
+            if api_key:
+                if header_name.lower() == "authorization" and not api_key.lower().startswith("bearer "):
+                    headers[header_name] = f"Bearer {api_key}"
+                else:
+                    headers[header_name] = api_key
+        else:
+            if not command:
+                return f"ERROR: 'command' is required for Stdio MCP server '{conn_id}' (e.g. 'npx')."
+            if api_key:
+                env_var_name = env_var or f"{conn_id.upper().replace('-', '_')}_API_KEY"
+                env[env_var_name] = api_key
+
+        from app.hub.mcp_client import MCPConnection
+        conn = MCPConnection(
+            id=conn_id,
+            name=name,
+            transport=transport,
+            perm=perm,
+            enabled=True,
+            url=url,
+            headers=headers,
+            command=command,
+            args=[str(a) for a in cmd_args],
+            env=env,
+        )
+
+        tools_discovered = []
+        if mcp_pool is not None:
+            try:
+                tools_discovered = await mcp_pool.test_connection(conn)
+            except Exception as ex:
+                return (
+                    f"Не удалось подключиться к MCP-серверу '{name}' ({conn_id}):\n"
+                    f"Ошибка верификации: {ex}\n"
+                    f"Проверьте URL, API-ключ и параметры соединения."
+                )
+
+        try:
+            saved = connections_store.upsert(conn)
+            if mcp_pool is not None:
+                mcp_pool.invalidate(saved.id)
+                if not tools_discovered:
+                    try:
+                        defs = await mcp_pool._discover_one(saved)
+                        tools_discovered = [{"name": d.name.split("__")[-1], "description": d.description} for d in defs]
+                    except Exception:
+                        pass
+        except Exception as exc:
+            return f"ERROR: Failed to save MCP connection: {exc}"
+
+        tool_lines = []
+        for t in tools_discovered[:10]:
+            tname = t.get("name") if isinstance(t, dict) else getattr(t, "name", str(t))
+            tdesc = t.get("description", "") if isinstance(t, dict) else getattr(t, "description", "")
+            tool_lines.append(f"- `mcp__{conn_id}__{tname}`: {tdesc[:80]}")
+        if len(tools_discovered) > 10:
+            tool_lines.append(f"... и еще {len(tools_discovered) - 10} инструментов.")
+
+        res_msg = [
+            f"MCP-сервер '{name}' (ID: `{conn_id}`) успешно подключен и сохранен!",
+            f"- Протокол: `{transport}`",
+            f"- Уровень доступа: `{perm}`",
+            f"- Аутентификация: {'API-ключ сохранен (Fernet-шифрование)' if api_key else 'Без аутентификации'}",
+            f"- Обнаружено инструментов: {len(tools_discovered)}",
+        ]
+        if tool_lines:
+            res_msg.append("\nДоступные инструменты:")
+            res_msg.extend(tool_lines)
+        res_msg.append("\nВсе инструменты готовы к использованию в чате!")
+        return "\n".join(res_msg)
 
     async def jarvis_consensus(args: dict[str, Any], _brain: str) -> str:
         query = str(args.get("query") or "").strip()
@@ -738,11 +903,41 @@ def build_builtin_tools(
         ),
         ToolDefinition(
             name="jarvis_connections",
-            description="List configured external MCP connections and their permission levels.",
-            parameters={"type": "object", "properties": {}},
+            description="Manage or list external MCP connections and inspect their tools.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["list", "test", "delete"], "description": "Action: 'list' (default), 'test', or 'delete'"},
+                    "conn_id": {"type": "string", "description": "Target connection ID for action 'test' or 'delete'"},
+                },
+            },
             required_perm=PermLevel.READONLY,
             source="builtin:hub",
             handler=jarvis_connections,
+            shape_output=False,
+        ),
+        ToolDefinition(
+            name="jarvis_mcp_connect",
+            description="Connect and register an external MCP server via API key or token (HTTP or Stdio). Tests the connection, discovers tools, and securely saves credentials.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "description": "Unique connection ID (e.g. 'brave-search', 'context7', 'github', 'tavily')"},
+                    "name": {"type": "string", "description": "Optional display name (e.g. 'Brave Search MCP')"},
+                    "url": {"type": "string", "description": "HTTP endpoint URL for the MCP server"},
+                    "api_key": {"type": "string", "description": "API key, token, or secret for authentication"},
+                    "header_name": {"type": "string", "description": "Header name for HTTP auth (default: 'Authorization' with Bearer, or 'x-api-key')"},
+                    "transport": {"type": "string", "enum": ["http", "stdio"], "description": "Transport protocol: 'http' or 'stdio'"},
+                    "command": {"type": "string", "description": "Command for stdio (e.g. 'npx')"},
+                    "args": {"type": "array", "items": {"type": "string"}, "description": "Arguments for stdio command"},
+                    "env_var": {"type": "string", "description": "Environment variable name for API key in stdio (e.g. 'BRAVE_API_KEY')"},
+                    "perm": {"type": "string", "enum": ["readonly", "safe", "full"], "description": "Permission level (default: 'safe')"},
+                },
+                "required": ["id"],
+            },
+            required_perm=PermLevel.SAFE,
+            source="builtin:hub",
+            handler=jarvis_mcp_connect,
             shape_output=False,
         ),
         ToolDefinition(

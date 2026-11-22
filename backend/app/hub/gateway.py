@@ -61,6 +61,8 @@ class MCPHubGateway:
             vaults=vaults,
             result_store=self.result_store,
             list_connections_fn=lambda: [c.to_public_dict() for c in self.connections.list_connections()],
+            connections_store=self.connections,
+            mcp_pool=self.mcp_pool,
             http_transport=http_transport,
             router_getter=lambda: self._engine_router,
             experience_getter=lambda: self._experience_store,

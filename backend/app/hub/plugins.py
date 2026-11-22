@@ -42,6 +42,7 @@ RESERVED_TOOLS = frozenset(
         "web_fetch",
         "jarvis_query",
         "jarvis_connections",
+        "jarvis_mcp_connect",
     }
 )
 

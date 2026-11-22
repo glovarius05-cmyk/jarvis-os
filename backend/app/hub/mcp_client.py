@@ -240,6 +240,12 @@ class MCPClientPool:
                 tools.extend(res)
         return tools
 
+    async def test_connection(self, conn: MCPConnection) -> list[dict[str, Any]]:
+        """Test an MCP connection by querying its tools list directly."""
+        if conn.transport == "http":
+            return await self._http_list_tools(conn)
+        return await self._stdio_list_tools(conn)
+
     async def _discover_one(self, conn: MCPConnection) -> list[ToolDefinition]:
         now = time.time()
         cached = self._cache.get(conn.id)
