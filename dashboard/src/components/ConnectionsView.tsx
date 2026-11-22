@@ -198,6 +198,23 @@ export function ConnectionsView() {
     }
   };
 
+  const handleConfirmPlatform = async (appId: string, connected: boolean) => {
+    try {
+      await api.confirmComposioApp(appId, connected);
+      await refreshComposio();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : `Failed to update status for ${appId}`);
+    }
+  };
+
+  useEffect(() => {
+    const onFocus = () => {
+      void refreshComposio();
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [refreshComposio]);
+
   useEffect(() => {
     void refresh();
   }, [refresh]);
@@ -377,10 +394,12 @@ export function ConnectionsView() {
             )}
             <button
               onClick={() => void refreshComposio()}
-              className="rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
-              title="Refresh social accounts"
+              disabled={composioLoading}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-850 px-2.5 py-1 text-xs font-medium text-zinc-300 hover:bg-zinc-750 hover:text-white transition disabled:opacity-50"
+              title="Синхронизировать статус аккаунтов с Composio"
             >
-              <RefreshCw className="h-3.5 w-3.5" />
+              <RefreshCw className={`h-3 w-3 ${composioLoading ? "animate-spin" : ""}`} />
+              <span>{composioLoading ? "Синхронизация..." : "Синхронизировать"}</span>
             </button>
           </div>
         </div>
@@ -468,7 +487,7 @@ export function ConnectionsView() {
                   </div>
                   <p className="mt-1 text-[11px] text-zinc-400">{platform.desc}</p>
                 </div>
-                <div className="mt-3 pt-2 border-t border-zinc-800/60">
+                <div className="mt-3 pt-2 border-t border-zinc-800/60 space-y-1.5">
                   <button
                     onClick={() => void handleConnectPlatform(platform.id)}
                     disabled={!composioConfigured || !composioValid || connectingApp === platform.id}
@@ -478,6 +497,26 @@ export function ConnectionsView() {
                     <span>{connectingApp === platform.id ? "Connecting..." : isConnected ? "Reconnect" : "Connect"}</span>
                     <ExternalLink className="h-3 w-3" />
                   </button>
+                  {!isConnected && composioValid && (
+                    <button
+                      type="button"
+                      onClick={() => void handleConfirmPlatform(platform.id, true)}
+                      className="inline-flex w-full items-center justify-center gap-1 text-[11px] text-zinc-500 hover:text-amber-400 transition py-0.5"
+                      title="Если вы уже выполнили вход в Composio в браузере, нажмите для подтверждения"
+                    >
+                      <span>Уже подключил в Composio</span>
+                    </button>
+                  )}
+                  {isConnected && (
+                    <button
+                      type="button"
+                      onClick={() => void handleConfirmPlatform(platform.id, false)}
+                      className="inline-flex w-full items-center justify-center gap-1 text-[10px] text-zinc-600 hover:text-rose-400 transition"
+                      title="Сбросить статус подключения"
+                    >
+                      <span>Отключить</span>
+                    </button>
+                  )}
                 </div>
               </div>
             );

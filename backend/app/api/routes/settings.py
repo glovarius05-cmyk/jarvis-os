@@ -28,6 +28,7 @@ ALLOWED_TOP_KEYS = {
     "groq_api_key",
     "telegram_bot_token",
     "composio_api_key",
+    "composio_connected_apps",
     "perplexity_api_key",
     "deepseek_api_key",
     "moonshot_api_key",

@@ -187,36 +187,94 @@ def extract_app_slug(item: Any) -> str:
         s = str(item or "").strip().lower()
     else:
         tk = item.get("toolkit")
-        tk_slug = tk.get("slug") if isinstance(tk, dict) else (str(tk) if tk else "")
-        ac = item.get("auth_config")
-        ac_slug = ac.get("toolkit_slug") if isinstance(ac, dict) else ""
+        tk_slug = ""
+        if isinstance(tk, dict):
+            tk_slug = str(tk.get("slug") or tk.get("toolkit_slug") or tk.get("name") or tk.get("id") or "")
+        elif tk:
+            tk_slug = str(tk)
+
+        ac = item.get("auth_config") or item.get("authConfig")
+        ac_slug = ""
+        if isinstance(ac, dict):
+            ac_tk = ac.get("toolkit")
+            ac_tk_slug = ac_tk.get("slug") if isinstance(ac_tk, dict) else ""
+            ac_slug = str(ac.get("toolkit_slug") or ac.get("slug") or ac_tk_slug or "")
+        elif ac:
+            ac_slug = str(ac)
+
         raw = (
             tk_slug
-            or item.get("appUniqueId")
+            or ac_slug
+            or item.get("app_name")
             or item.get("appName")
             or item.get("app")
-            or ac_slug
+            or item.get("toolkit_slug")
+            or item.get("toolkitSlug")
+            or item.get("app_unique_id")
+            or item.get("appUniqueId")
             or item.get("slug")
+            or item.get("name")
+            or item.get("integration_id")
+            or item.get("integrationId")
             or ""
         )
         s = str(raw).strip().lower()
 
     s_clean = s.replace("-", "").replace("_", "").replace(" ", "")
-    if s_clean in ("googlecalendar", "calendar", "gcal"):
+    if any(k in s_clean for k in ("calendar", "gcal", "googlecalendar")):
         return "googlecalendar"
-    if s_clean in ("googlesheets", "sheets", "gsheets"):
+    if any(k in s_clean for k in ("sheet", "gsheet", "googlesheet")):
         return "googlesheets"
-    if s_clean in ("gmail", "googlemail"):
+    if any(k in s_clean for k in ("gmail", "googlemail")):
         return "gmail"
-    if s_clean in ("twitter", "x"):
+    if any(k in s_clean for k in ("twitter", "tweet")) or s_clean == "x":
         return "twitter"
+    if "github" in s_clean:
+        return "github"
+    if "notion" in s_clean:
+        return "notion"
+    if "linkedin" in s_clean:
+        return "linkedin"
+    if "instagram" in s_clean:
+        return "instagram"
+    if "facebook" in s_clean:
+        return "facebook"
+    if "youtube" in s_clean:
+        return "youtube"
+    if "reddit" in s_clean:
+        return "reddit"
+    if "slack" in s_clean:
+        return "slack"
     return s_clean or s
+
+
+class ComposioConfirmPayload(BaseModel):
+    app: str = Field(..., min_length=1, max_length=50)
+    connected: bool = Field(default=True)
+
+
+@router.post("/api/hub/composio/confirm")
+async def confirm_composio_app(
+    payload: ComposioConfirmPayload,
+    container: AppContainer = Depends(get_container),
+) -> dict[str, Any]:
+    """Persist manual verification or confirmation that an app is connected in Composio."""
+    app_slug = extract_app_slug(payload.app)
+    cfg = container.settings.load()
+    existing = list(cfg.get("composio_connected_apps") or [])
+    if payload.connected:
+        if app_slug not in existing:
+            existing.append(app_slug)
+    else:
+        existing = [a for a in existing if a != app_slug]
+    container.settings.update({"composio_connected_apps": existing})
+    return {"ok": True, "connected_apps": existing}
 
 
 @router.post("/api/hub/composio/reset")
 async def reset_composio_key(container: AppContainer = Depends(get_container)) -> dict[str, Any]:
     """Explicitly reset/clear Composio API key from settings."""
-    container.settings.update({"composio_api_key": ""})
+    container.settings.update({"composio_api_key": "", "composio_connected_apps": []})
     return {"ok": True, "message": "Composio API key successfully cleared"}
 
 
@@ -244,8 +302,14 @@ async def get_composio_status(container: AppContainer = Depends(get_container)) 
 
     masked_key = f"{key[:4]}...{key[-4:]}" if len(key) > 8 else "***"
     accounts_by_app: dict[str, dict[str, Any]] = {}
+    mcp_succeeded = False
+    mcp_tool_count = 0
+    active_mcp_headers = None
+    rest_succeeded = False
+    last_status = 401
+    last_text = ""
 
-    # 1. Try connect.composio.dev/mcp with both x-api-key and x-consumer-api-key
+    # 1. Direct MCP check on connect.composio.dev/mcp
     mcp_headers_to_try = []
     if key.lower().startswith("ck"):
         mcp_headers_to_try.append({"x-consumer-api-key": key, "Content-Type": "application/json"})
@@ -254,42 +318,93 @@ async def get_composio_status(container: AppContainer = Depends(get_container)) 
         mcp_headers_to_try.append({"x-api-key": key, "Content-Type": "application/json"})
         mcp_headers_to_try.append({"x-consumer-api-key": key, "Content-Type": "application/json"})
 
-    mcp_succeeded = False
-    mcp_tool_count = 0
-    active_mcp_headers = None
+    check_toolkits = [
+        "gmail",
+        "googlecalendar",
+        "googlesheets",
+        "github",
+        "notion",
+        "twitter",
+        "linkedin",
+        "instagram",
+        "facebook",
+        "threads",
+        "youtube",
+        "reddit",
+    ]
 
     for m_hdrs in mcp_headers_to_try:
         try:
-            async with httpx.AsyncClient(timeout=8.0) as client:
-                mcp_res = await client.post(
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                # A. Health check via tools/list
+                list_res = await client.post(
                     "https://connect.composio.dev/mcp",
                     json={"jsonrpc": "2.0", "method": "tools/list", "id": 1},
                     headers=m_hdrs,
                 )
-                if mcp_res.status_code == 200:
+                if list_res.status_code == 200:
                     mcp_succeeded = True
                     active_mcp_headers = m_hdrs
-                    mcp_data = mcp_res.json()
-                    tools = mcp_data.get("result", {}).get("tools", [])
-                    mcp_tool_count = len(tools)
-                    for t in tools:
-                        tname = str(t.get("name") or "").lower().replace("-", "").replace("_", "")
-                        if "gmail" in tname or "googlemail" in tname:
-                            accounts_by_app["gmail"] = {"app": "gmail", "status": "ACTIVE", "id": "mcp_gmail"}
-                        if "calendar" in tname:
-                            accounts_by_app["googlecalendar"] = {"app": "googlecalendar", "status": "ACTIVE", "id": "mcp_googlecalendar"}
-                        if "sheet" in tname:
-                            accounts_by_app["googlesheets"] = {"app": "googlesheets", "status": "ACTIVE", "id": "mcp_googlesheets"}
-                        if "github" in tname:
-                            accounts_by_app["github"] = {"app": "github", "status": "ACTIVE", "id": "mcp_github"}
-                        if "notion" in tname:
-                            accounts_by_app["notion"] = {"app": "notion", "status": "ACTIVE", "id": "mcp_notion"}
-                        if "twitter" in tname or "tweet" in tname or tname.startswith("x"):
-                            accounts_by_app["twitter"] = {"app": "twitter", "status": "ACTIVE", "id": "mcp_twitter"}
-                        if "linkedin" in tname:
-                            accounts_by_app["linkedin"] = {"app": "linkedin", "status": "ACTIVE", "id": "mcp_linkedin"}
-                        if "instagram" in tname:
-                            accounts_by_app["instagram"] = {"app": "instagram", "status": "ACTIVE", "id": "mcp_instagram"}
+                    tools_list = list_res.json().get("result", {}).get("tools", [])
+                    mcp_tool_count = len(tools_list)
+
+                    # B. Check exact connection status for toolkits via COMPOSIO_MANAGE_CONNECTIONS
+                    call_res = await client.post(
+                        "https://connect.composio.dev/mcp",
+                        json={
+                            "jsonrpc": "2.0",
+                            "method": "tools/call",
+                            "params": {
+                                "name": "COMPOSIO_MANAGE_CONNECTIONS",
+                                "arguments": {"toolkits": check_toolkits, "reinitiate_all": False},
+                            },
+                            "id": 2,
+                        },
+                        headers=m_hdrs,
+                    )
+                    if call_res.status_code == 200:
+                        call_payload = call_res.json().get("result", {})
+                        raw_json_str = ""
+                        if isinstance(call_payload, dict):
+                            content = call_payload.get("content", [])
+                            if isinstance(content, list) and content:
+                                raw_json_str = content[0].get("text", "")
+                        if not raw_json_str and isinstance(call_payload, str):
+                            raw_json_str = call_payload
+
+                        res_obj = {}
+                        if raw_json_str:
+                            try:
+                                res_obj = json.loads(raw_json_str)
+                            except Exception:
+                                pass
+                        elif isinstance(call_payload, dict):
+                            res_obj = call_payload
+
+                        data_part = res_obj.get("data", {}) if isinstance(res_obj, dict) else {}
+                        results_map = (
+                            data_part.get("results")
+                            or res_obj.get("results")
+                            or (data_part if isinstance(data_part, dict) else {})
+                        )
+                        if isinstance(results_map, dict):
+                            for tk, tk_info in results_map.items():
+                                if not isinstance(tk_info, dict):
+                                    continue
+                                norm_slug = extract_app_slug(tk)
+                                st = str(tk_info.get("status") or "").lower()
+                                accs = tk_info.get("accounts") or []
+                                is_active = (
+                                    st in ("active", "connected", "ready", "enabled", "initiated", "initialized")
+                                    or any(
+                                        str(a.get("status") or "").upper() in ("ACTIVE", "CONNECTED", "READY", "ENABLED", "INITIATED")
+                                        for a in accs
+                                        if isinstance(a, dict)
+                                    )
+                                    or (bool(accs) and st != "disconnected")
+                                )
+                                if is_active:
+                                    accounts_by_app[norm_slug] = {"app": norm_slug, "status": "ACTIVE", "id": norm_slug}
                     break
         except Exception:
             continue
@@ -313,79 +428,72 @@ async def get_composio_status(container: AppContainer = Depends(get_container)) 
         except Exception:
             pass
 
-    # 2. Try Composio toolkits call if registered
-    try:
-        active_brain = container.settings.load_public().get("active_brain") or "Brain Default"
-        raw = await container.hub.call_tool(
-            name="mcp__composio__COMPOSIO_MANAGE_CONNECTIONS",
-            args={"toolkits": ["gmail", "googlecalendar", "googlesheets", "github", "notion", "twitter", "linkedin", "instagram"]},
-            brain=active_brain,
-            run_mode="full",
-            for_model=False,
-        )
-        data = json.loads(raw)
-        results = data.get("data", {}).get("results", {})
-        for app_raw, app_info in results.items():
-            if not isinstance(app_info, dict):
-                continue
-            normalized_app = extract_app_slug({"slug": app_raw})
-            acc_list = app_info.get("accounts") or []
-            status = str(app_info.get("status") or "disconnected").upper()
-            if status == "ACTIVE" or any(str(a.get("status", "")).upper() == "ACTIVE" for a in acc_list):
-                accounts_by_app[normalized_app] = {"app": normalized_app, "status": "ACTIVE", "id": normalized_app}
-            elif acc_list:
-                accounts_by_app[normalized_app] = {"app": normalized_app, "status": str(acc_list[0].get("status", "INITIATED")).upper(), "id": str(acc_list[0].get("id", normalized_app))}
-    except Exception:
-        pass
-
-    # 3. Direct REST API to backend.composio.dev for connected_accounts
-    header_variants = [
+    # 2. REST API queries to backend.composio.dev (Platform mode)
+    rest_urls = [
+        f"{COMPOSIO_BASE}/connected_accounts?account_type=ALL",
+        f"{COMPOSIO_BASE}/connected_accounts",
+        f"{COMPOSIO_BASE}/connected_accounts?user_ids=default",
+        "https://backend.composio.dev/api/v3/connected_accounts?account_type=ALL",
+        "https://backend.composio.dev/api/v3/connected_accounts",
+        "https://backend.composio.dev/api/v3/connected_accounts?user_ids=default",
+    ]
+    rest_headers = [
         {"x-api-key": key, "Accept": "application/json"},
         {"x-consumer-api-key": key, "Accept": "application/json"},
         {"x-org-api-key": key, "Accept": "application/json"},
         {"x-user-api-key": key, "Accept": "application/json"},
         {"Authorization": f"Bearer {key}", "Accept": "application/json"},
     ]
-    urls_to_try = [
-        f"{COMPOSIO_BASE}/connected_accounts",
-        f"{COMPOSIO_BASE}/connected_accounts?account_type=ALL",
-        "https://backend.composio.dev/api/v3/connected_accounts",
-        "https://backend.composio.dev/api/v3/connected_accounts?account_type=ALL",
-    ]
-    rest_succeeded = False
-    last_status = 401
-    last_text = ""
 
-    for url in urls_to_try:
-        for headers in header_variants:
+    for r_url in rest_urls:
+        for r_hdrs in rest_headers:
             try:
                 async with httpx.AsyncClient(timeout=8.0) as client:
-                    res = await client.get(url, headers=headers)
-                    last_status = res.status_code
-                    last_text = res.text
-                    if res.status_code == 200:
+                    r_res = await client.get(r_url, headers=r_hdrs)
+                    last_status = r_res.status_code
+                    last_text = r_res.text
+                    if r_res.status_code == 200:
                         rest_succeeded = True
-                        data = res.json()
-                        items = data.get("items") or data.get("connected_accounts") or data.get("data") or []
-                        for it in items:
-                            if not isinstance(it, dict):
+                        r_data = r_res.json()
+                        raw_items = []
+                        if isinstance(r_data, list):
+                            raw_items = r_data
+                        elif isinstance(r_data, dict):
+                            raw_items = (
+                                r_data.get("items")
+                                or r_data.get("connected_accounts")
+                                or r_data.get("data")
+                                or r_data.get("results")
+                                or []
+                            )
+                        for item in raw_items:
+                            if not isinstance(item, dict):
                                 continue
-                            app_name = extract_app_slug(it)
-                            if not app_name:
+                            app_slug = extract_app_slug(item)
+                            if not app_slug:
                                 continue
-                            status = str(it.get("status") or "ACTIVE").upper()
-                            account_id = str(it.get("id") or it.get("nanoid") or it.get("accountId") or "")
-                            accounts_by_app[app_name] = {"app": app_name, "status": status, "id": account_id}
-                        break
+                            raw_st = str(item.get("status") or "ACTIVE").upper()
+                            st = "ACTIVE" if raw_st in ("ACTIVE", "CONNECTED", "READY", "ENABLED", "INITIATED", "INITIALIZED") else raw_st
+                            acc_id = str(item.get("id") or item.get("nanoid") or item.get("accountId") or app_slug)
+                            accounts_by_app[app_slug] = {"app": app_slug, "status": st, "id": acc_id}
             except Exception:
                 continue
-        if rest_succeeded:
-            break
 
-    if mcp_succeeded or rest_succeeded:
+    # 3. Merge locally persisted / user confirmed connections
+    try:
+        saved_apps = container.settings.load().get("composio_connected_apps") or []
+        if isinstance(saved_apps, list):
+            for s_app in saved_apps:
+                s_slug = extract_app_slug(str(s_app))
+                if s_slug and s_slug not in accounts_by_app:
+                    accounts_by_app[s_slug] = {"app": s_slug, "status": "ACTIVE", "id": f"local_{s_slug}"}
+    except Exception:
+        pass
+
+    if mcp_succeeded or rest_succeeded or accounts_by_app:
         accounts = list(accounts_by_app.values())
         msg = f"{len(accounts)} accounts connected" if accounts else (
-            f"Composio MCP active ({mcp_tool_count} tools). Click Connect to link accounts."
+            f"Composio active ({mcp_tool_count} MCP tools). Click Connect to link accounts."
             if mcp_succeeded else "Key valid. No accounts connected yet."
         )
         return {

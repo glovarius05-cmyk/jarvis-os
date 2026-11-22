@@ -95,13 +95,17 @@ def register(ctx) -> None:
                         )
                     connected = []
                     for it in items:
-                        app_name = (
+                        raw_app = (
                             it.get("appUniqueId")
                             or it.get("appName")
+                            or it.get("app_name")
                             or it.get("app")
                             or it.get("toolkit")
                             or "unknown"
                         )
+                        if isinstance(raw_app, dict):
+                            raw_app = raw_app.get("slug") or raw_app.get("name") or "unknown"
+                        app_name = str(raw_app).strip()
                         status = it.get("status", "ACTIVE")
                         account_id = it.get("id") or it.get("nanoid") or it.get("accountId") or "id"
                         connected.append(f"- {app_name.upper()} (status: {status}, id: {account_id})")

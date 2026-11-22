@@ -386,6 +386,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ app, redirect_url }),
     }),
+  confirmComposioApp: (app: string, connected = true) =>
+    requestJson<{ ok: boolean; connected_apps: string[] }>("/api/hub/composio/confirm", {
+      method: "POST",
+      body: JSON.stringify({ app, connected }),
+    }),
   listBrains: () => requestJson<BrainsResponse>("/api/brains"),
   createBrain: (name: string, activate = true) =>
     requestJson<BrainItem>("/api/brains", {

@@ -155,6 +155,16 @@ def test_composio_hub_endpoints(tmp_path: Path) -> None:
     assert "auth_url" in res_cal.json()
     assert "googlecalendar" in res_cal.json()["auth_url"]
 
+    # 5. Confirm app endpoint persists and shows up in status
+    res_conf = client.post("/api/hub/composio/confirm", json={"app": "gmail", "connected": True})
+    assert res_conf.status_code == 200
+    assert "gmail" in res_conf.json()["connected_apps"]
+
+    res_st = client.get("/api/hub/composio/status")
+    assert res_st.status_code == 200
+    accounts = res_st.json()["accounts"]
+    assert any(a["app"] == "gmail" for a in accounts)
+
 
 def test_extract_app_slug() -> None:
     from app.api.routes.hub import extract_app_slug
