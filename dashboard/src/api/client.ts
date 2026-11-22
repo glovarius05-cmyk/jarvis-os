@@ -402,6 +402,15 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ app, connected }),
     }),
+  getAgensiStatus: () =>
+    requestJson<{ connected: boolean; authenticated: boolean; tools_count: number; url?: string; error?: string }>(
+      "/api/hub/agensi/status"
+    ),
+  connectAgensi: (redirect_url = "") =>
+    requestJson<{ ok: boolean; auth_url: string; callback_url: string }>("/api/hub/agensi/connect", {
+      method: "POST",
+      body: JSON.stringify({ redirect_url }),
+    }),
   listBrains: () => requestJson<BrainsResponse>("/api/brains"),
   createBrain: (name: string, activate = true) =>
     requestJson<BrainItem>("/api/brains", {

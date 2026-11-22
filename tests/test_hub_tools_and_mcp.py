@@ -316,3 +316,15 @@ async def test_jarvis_mcp_connect_tool_and_test_endpoint(tmp_path: Path, project
     assert "успешно удалено" in res_del
     assert len(ctr.hub.connections.list_connections()) == 0
 
+
+def test_normalize_mcp_url() -> None:
+    from app.hub.mcp_client import normalize_mcp_url
+    assert normalize_mcp_url("agensi.io") == "https://mcp.agensi.io/mcp"
+    assert normalize_mcp_url("https://agensi.io") == "https://mcp.agensi.io/mcp"
+    assert normalize_mcp_url("https://www.agensi.io") == "https://mcp.agensi.io/mcp"
+    assert normalize_mcp_url("https://mcp.agensi.io") == "https://mcp.agensi.io/mcp"
+    assert normalize_mcp_url("https://mcp.agensi.io/") == "https://mcp.agensi.io/mcp"
+    assert normalize_mcp_url("https://mcp.agensi.io/mcp/auth") == "https://mcp.agensi.io/mcp"
+    assert normalize_mcp_url("https://mcp.agensi.io/sse") == "https://mcp.agensi.io/sse"
+    assert normalize_mcp_url("http://127.0.0.1:8080/mcp") == "http://127.0.0.1:8080/mcp"
+

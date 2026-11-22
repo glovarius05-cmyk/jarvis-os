@@ -128,3 +128,8 @@ def test_chat_file_upload_and_raw_endpoint(client: TestClient) -> None:
     r_raw2 = client.get(f"/api/brain/raw?path={data2['path']}")
     assert r_raw2.status_code == 200
     assert r_raw2.content == png_bytes
+
+    # Agensi status endpoint
+    r_agensi = client.get("/api/hub/agensi/status")
+    assert r_agensi.status_code == 200
+    assert r_agensi.json()["connected"] is False

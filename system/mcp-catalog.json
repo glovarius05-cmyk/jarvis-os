@@ -140,6 +140,18 @@
       "header_name": "x-api-key",
       "api_key_placeholder": "ak_... or ck_...",
       "write_tools": ["*_create_*", "*_post_*", "*_publish_*", "*_delete_*", "*_send_*", "*_upload_*"]
+    },
+    {
+      "id": "agensi",
+      "name": "Agensi Skills Marketplace",
+      "description": "500+ verified agent skills, expert prompts, and tool integrations from Agensi.io.",
+      "transport": "http",
+      "default_url": "https://mcp.agensi.io/mcp",
+      "default_perm": "safe",
+      "requires_api_key": false,
+      "header_name": "Authorization",
+      "api_key_placeholder": "Optional Bearer token (or click Sign in with Agensi)",
+      "write_tools": ["upload_*", "set_skill_*", "submit_*", "update_*", "buy_*"]
     }
   ]
 }

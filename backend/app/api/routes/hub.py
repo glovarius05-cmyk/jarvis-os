@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import re
+import secrets
 import sys
+import time
 from typing import Any
+from urllib.parse import quote_plus, urlencode
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi.responses import RedirectResponse
+import httpx
 from pydantic import BaseModel, Field
 
 from app.api.deps import get_container
@@ -17,6 +24,7 @@ from app.hub.mcp_client import MCPConnection
 router = APIRouter(tags=["hub"])
 
 _LOCAL_CLIENTS = {"127.0.0.1", "::1", "localhost", "testclient"}
+_AGENSI_OAUTH_PENDING: dict[str, dict[str, Any]] = {}
 
 
 class UpsertConnectionPayload(BaseModel):
@@ -775,4 +783,149 @@ async def initiate_composio_connect(
         "auth_url": dashboard_url,
         "message": f"Redirecting to Composio to connect {toolkit_slug}",
     }
+
+
+@router.post("/api/hub/agensi/connect")
+async def initiate_agensi_connect(
+    request: Request,
+    redirect_url: str | None = None,
+    container: AppContainer = Depends(get_container),
+) -> dict[str, Any]:
+    # Clean up expired states (> 15 minutes)
+    now = time.time()
+    for st, data in list(_AGENSI_OAUTH_PENDING.items()):
+        if now - data.get("created_at", 0) > 900:
+            _AGENSI_OAUTH_PENDING.pop(st, None)
+
+    # Compute callback URL
+    if redirect_url:
+        cb_url = redirect_url
+    else:
+        base = str(request.base_url).rstrip("/")
+        cb_url = f"{base}/api/hub/agensi/callback"
+
+    # Register with Agensi via Dynamic Client Registration (RFC 7591)
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        try:
+            reg_resp = await client.post(
+                "https://mcp.agensi.io/oauth/register",
+                headers={"Content-Type": "application/json"},
+                json={
+                    "client_name": "Jarvis OS",
+                    "redirect_uris": [cb_url],
+                },
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Failed to reach Agensi registration server: {exc}") from exc
+
+        if reg_resp.status_code not in (200, 201):
+            raise HTTPException(status_code=502, detail=f"Failed to register OAuth client with Agensi: {reg_resp.text[:200]}")
+        reg_data = reg_resp.json()
+        client_id = reg_data.get("client_id")
+        if not client_id:
+            raise HTTPException(status_code=502, detail="No client_id returned by Agensi OAuth registration")
+
+    verifier = secrets.token_urlsafe(64)
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    challenge = base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+    state = secrets.token_hex(16)
+
+    _AGENSI_OAUTH_PENDING[state] = {
+        "client_id": client_id,
+        "verifier": verifier,
+        "redirect_uri": cb_url,
+        "created_at": now,
+    }
+
+    params = {
+        "response_type": "code",
+        "client_id": client_id,
+        "redirect_uri": cb_url,
+        "scope": "read install",
+        "code_challenge": challenge,
+        "code_challenge_method": "S256",
+        "state": state,
+    }
+    auth_url = f"https://mcp.agensi.io/oauth/authorize?{urlencode(params)}"
+    return {"ok": True, "auth_url": auth_url, "callback_url": cb_url}
+
+
+@router.get("/api/hub/agensi/callback")
+async def agensi_oauth_callback(
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+    container: AppContainer = Depends(get_container),
+) -> Response:
+    if error or not code or not state:
+        return RedirectResponse(url=f"/#error={quote_plus(error or 'Missing authorization code')}")
+
+    data = _AGENSI_OAUTH_PENDING.pop(state, None)
+    if not data:
+        return RedirectResponse(url="/#error=Invalid+or+expired+OAuth+state")
+
+    client_id = data["client_id"]
+    verifier = data["verifier"]
+    redirect_uri = data["redirect_uri"]
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        try:
+            token_resp = await client.post(
+                "https://mcp.agensi.io/oauth/token",
+                data={
+                    "grant_type": "authorization_code",
+                    "client_id": client_id,
+                    "code": code,
+                    "redirect_uri": redirect_uri,
+                    "code_verifier": verifier,
+                },
+            )
+        except Exception as exc:
+            return RedirectResponse(url=f"/#error={quote_plus(f'Failed to contact Agensi token endpoint: {exc}')}")
+
+        if token_resp.status_code != 200:
+            return RedirectResponse(url=f"/#error={quote_plus(f'Token exchange failed: {token_resp.text[:200]}')}")
+
+        token_data = token_resp.json()
+        access_token = token_data.get("access_token")
+        if not access_token:
+            return RedirectResponse(url="/#error=No+access+token+returned+by+Agensi")
+
+    # Upsert connection with bearer token
+    conn = MCPConnection(
+        id="agensi",
+        name="Agensi Skills Marketplace",
+        transport="http",
+        perm="safe",
+        enabled=True,
+        url="https://mcp.agensi.io/mcp",
+        headers={"Authorization": f"Bearer {access_token}"},
+        write_tools=["upload_*", "set_skill_*", "submit_*", "update_*", "buy_*"],
+    )
+    container.hub.connections.upsert(conn)
+    container.hub.mcp_pool.invalidate("agensi")
+    return RedirectResponse(url="/#connected=agensi")
+
+
+@router.get("/api/hub/agensi/status")
+async def get_agensi_status(container: AppContainer = Depends(get_container)) -> dict[str, Any]:
+    conn = container.hub.connections.get("agensi")
+    if not conn or not conn.enabled:
+        return {"connected": False, "authenticated": False, "tools_count": 0}
+    has_auth = bool(conn.headers.get("Authorization") or conn.headers.get("authorization"))
+    try:
+        tools = await container.hub.mcp_pool.test_connection(conn)
+        return {
+            "connected": True,
+            "authenticated": has_auth,
+            "tools_count": len(tools),
+            "url": conn.url,
+        }
+    except Exception as exc:
+        return {
+            "connected": True,
+            "authenticated": has_auth,
+            "error": str(exc),
+            "tools_count": 0,
+        }
 

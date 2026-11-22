@@ -12,6 +12,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 
@@ -24,6 +25,27 @@ _WRITE_HINT_RE = re.compile(
     r"(^|_)(create|update|delete|remove|drop|write|edit|send|post|publish|pay|charge|transfer|deploy|exec|run)(_|$)",
     re.IGNORECASE,
 )
+
+
+def normalize_mcp_url(url: str) -> str:
+    """Normalize and auto-route MCP URLs (e.g. converting marketing/docs URLs to live endpoints)."""
+    clean = (url or "").strip()
+    if not clean:
+        return clean
+    if not clean.startswith(("http://", "https://")):
+        clean = f"https://{clean}"
+    try:
+        parsed = urlparse(clean)
+        host = (parsed.hostname or "").lower()
+        if host in ("agensi.io", "www.agensi.io"):
+            return "https://mcp.agensi.io/mcp"
+        if host == "mcp.agensi.io":
+            p = parsed.path.rstrip("/")
+            if p in ("", "/mcp/auth", "/auth"):
+                return "https://mcp.agensi.io/mcp"
+    except Exception:
+        pass
+    return clean
 
 
 @dataclass
@@ -107,8 +129,10 @@ class MCPConnectionStore:
             raise ValueError("Connection id must be lowercase ASCII alphanumeric/hyphen/underscore (1-48 chars)")
         if conn.transport not in {"http", "stdio"}:
             raise ValueError("Transport must be 'http' or 'stdio'")
-        if conn.transport == "http" and not conn.url.strip():
-            raise ValueError("HTTP MCP connection requires 'url'")
+        if conn.transport == "http":
+            conn.url = normalize_mcp_url(conn.url)
+            if not conn.url.strip():
+                raise ValueError("HTTP MCP connection requires 'url'")
         if conn.transport == "stdio" and not conn.command.strip():
             raise ValueError("Stdio MCP connection requires 'command'")
 
@@ -297,14 +321,15 @@ class MCPClientPool:
         return defs
 
     async def _http_rpc(self, conn: MCPConnection, method: str, params: dict[str, Any] | None = None) -> Any:
+        url = normalize_mcp_url(conn.url)
         payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params or {}}
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
             **conn.headers,
         }
-        async with httpx.AsyncClient(timeout=15.0, transport=self._http_transport) as client:
-            resp = await client.post(conn.url, headers=headers, json=payload)
+        async with httpx.AsyncClient(timeout=25.0, transport=self._http_transport, follow_redirects=True) as client:
+            resp = await client.post(url, headers=headers, json=payload)
             if resp.status_code >= 400:
                 raise RuntimeError(f"MCP HTTP {resp.status_code}: {resp.text[:300]}")
             text = resp.text.strip()

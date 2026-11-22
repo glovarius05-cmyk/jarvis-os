@@ -92,6 +92,10 @@ export function ConnectionsView() {
   const [composioMaskedKey, setComposioMaskedKey] = useState<string | null>(null);
   const [composioMsg, setComposioMsg] = useState<string | null>(null);
 
+  // Agensi OAuth State
+  const [agensiStatus, setAgensiStatus] = useState<{ connected: boolean; authenticated: boolean; tools_count: number } | null>(null);
+  const [agensiConnecting, setAgensiConnecting] = useState(false);
+
   // Stdio MCP Bridge State
   const [mcpConfig, setMcpConfig] = useState<{
     python_path: string;
@@ -117,6 +121,15 @@ export function ConnectionsView() {
     }
   }, []);
 
+  const refreshAgensi = useCallback(async () => {
+    try {
+      const st = await api.getAgensiStatus();
+      setAgensiStatus(st);
+    } catch {
+      // ignore
+    }
+  }, []);
+
   const refresh = useCallback(async () => {
     try {
       const [cRes, tRes, aRes, catRes] = await Promise.all([
@@ -134,8 +147,30 @@ export function ConnectionsView() {
       setError(err instanceof Error ? err.message : "Failed to load MCP Hub");
     }
     void refreshComposio();
+    void refreshAgensi();
     void api.getHubMcpConfig().then(setMcpConfig).catch(() => {});
-  }, [previewMode, refreshComposio]);
+  }, [previewMode, refreshComposio, refreshAgensi]);
+
+  useEffect(() => {
+    if (window.location.hash.includes("connected=agensi")) {
+      void refreshAgensi();
+      void refresh();
+    }
+  }, [refreshAgensi, refresh]);
+
+  const handleConnectAgensi = async () => {
+    setAgensiConnecting(true);
+    try {
+      const res = await api.connectAgensi();
+      if (res.auth_url) {
+        window.location.href = res.auth_url;
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to initiate Agensi OAuth sign-in");
+    } finally {
+      setAgensiConnecting(false);
+    }
+  };
 
   const handleSelectPreset = (p: {
     id: string;
@@ -630,6 +665,20 @@ export function ConnectionsView() {
                     <span>Perm: <span className="text-amber-400/90">{cat.default_perm}</span></span>
                     <span className="text-amber-300 font-medium">Click to Fill</span>
                   </div>
+                  {cat.id === "agensi" && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void handleConnectAgensi();
+                      }}
+                      disabled={agensiConnecting}
+                      className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/15 py-1 text-[11px] font-medium text-amber-300 hover:bg-amber-500/25 transition disabled:opacity-50"
+                    >
+                      <ExternalLink className="h-3 w-3" />
+                      <span>{agensiStatus?.authenticated ? "Re-auth with Agensi (OAuth)" : "1-Click Sign in with Agensi"}</span>
+                    </button>
+                  )}
                 </div>
               );
             })}
@@ -776,6 +825,17 @@ export function ConnectionsView() {
             <RefreshCw className={`h-3.5 w-3.5 ${isTesting ? "animate-spin" : ""}`} />
             {isTesting ? "Testing..." : "Test Connection"}
           </button>
+          {connId === "agensi" && (
+            <button
+              type="button"
+              onClick={() => void handleConnectAgensi()}
+              disabled={agensiConnecting}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/50 bg-amber-500/15 px-3.5 py-1.5 text-xs font-medium text-amber-300 hover:bg-amber-500/25 transition disabled:opacity-50"
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+              <span>{agensiConnecting ? "Connecting..." : (agensiStatus?.authenticated ? "Re-auth Agensi" : "Sign in via Agensi OAuth")}</span>
+            </button>
+          )}
           {testResult && (
             testResult.success ? (
               <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-400">
