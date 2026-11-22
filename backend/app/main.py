@@ -120,7 +120,14 @@ def create_app(container: AppContainer | None = None, *, enable_scheduler: bool 
     def serve_index():
         index_file = dist_dir / "index.html"
         if index_file.exists():
-            return FileResponse(index_file)
+            return FileResponse(
+                index_file,
+                headers={
+                    "Cache-Control": "no-cache, no-store, must-revalidate",
+                    "Pragma": "no-cache",
+                    "Expires": "0",
+                },
+            )
         return PlainTextResponse(
             "Jarvis OS API is running. Start the Vite dev server in dashboard/ or run `npm run build`.",
             status_code=200,
