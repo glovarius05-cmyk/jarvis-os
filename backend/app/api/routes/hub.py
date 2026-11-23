@@ -885,12 +885,39 @@ async def agensi_oauth_callback(
     error: str | None = None,
     container: AppContainer = Depends(get_container),
 ) -> Response:
-    if error or not code or not state:
-        return RedirectResponse(url=f"/#error={quote_plus(error or 'Missing authorization code')}")
+    from fastapi.responses import HTMLResponse
 
-    data = _AGENSI_OAUTH_PENDING.pop(state, None)
+    if error:
+        return HTMLResponse(
+            status_code=400,
+            content=f"""<!DOCTYPE html><html><body style="background:#09090b;color:#f4f4f5;font-family:sans-serif;padding:40px;text-align:center;">
+            <h2 style="color:#f43f5e;">Ошибка авторизации Agensi</h2><p>{error}</p>
+            <p><a style="color:#f59e0b;" href="/#tab=hub">Вернуться в MCP Hub</a></p></body></html>""",
+        )
+
+    if not code:
+        return HTMLResponse(
+            status_code=400,
+            content="""<!DOCTYPE html><html><body style="background:#09090b;color:#f4f4f5;font-family:sans-serif;padding:40px;text-align:center;">
+            <h2 style="color:#f43f5e;">Отсутствует код авторизации</h2>
+            <p><a style="color:#f59e0b;" href="/#tab=hub">Вернуться в MCP Hub</a></p></body></html>""",
+        )
+
+    data = None
+    if state and state in _AGENSI_OAUTH_PENDING:
+        data = _AGENSI_OAUTH_PENDING.pop(state)
+    elif _AGENSI_OAUTH_PENDING:
+        latest_key = max(_AGENSI_OAUTH_PENDING.keys(), key=lambda k: _AGENSI_OAUTH_PENDING[k].get("created_at", 0))
+        data = _AGENSI_OAUTH_PENDING.pop(latest_key)
+
     if not data:
-        return RedirectResponse(url="/#error=Invalid+or+expired+OAuth+state")
+        return HTMLResponse(
+            status_code=400,
+            content="""<!DOCTYPE html><html><body style="background:#09090b;color:#f4f4f5;font-family:sans-serif;padding:40px;text-align:center;">
+            <h2 style="color:#f43f5e;">Сессия авторизации истекла</h2>
+            <p>Пожалуйста, нажмите кнопку «Sign in via Agensi OAuth» заново в MCP Hub.</p>
+            <p><a style="color:#f59e0b;" href="/#tab=hub">Вернуться в MCP Hub</a></p></body></html>""",
+        )
 
     client_id = data["client_id"]
     verifier = data["verifier"]
@@ -909,15 +936,31 @@ async def agensi_oauth_callback(
                 },
             )
         except Exception as exc:
-            return RedirectResponse(url=f"/#error={quote_plus(f'Failed to contact Agensi token endpoint: {exc}')}")
+            return HTMLResponse(
+                status_code=502,
+                content=f"""<!DOCTYPE html><html><body style="background:#09090b;color:#f4f4f5;font-family:sans-serif;padding:40px;text-align:center;">
+                <h2 style="color:#f43f5e;">Ошибка связи с Agensi</h2><p>{exc}</p>
+                <p><a style="color:#f59e0b;" href="/#tab=hub">Вернуться в MCP Hub</a></p></body></html>""",
+            )
 
         if token_resp.status_code != 200:
-            return RedirectResponse(url=f"/#error={quote_plus(f'Token exchange failed: {token_resp.text[:200]}')}")
+            return HTMLResponse(
+                status_code=400,
+                content=f"""<!DOCTYPE html><html><body style="background:#09090b;color:#f4f4f5;font-family:sans-serif;padding:40px;text-align:center;">
+                <h2 style="color:#f43f5e;">Agensi отклонил запрос ({token_resp.status_code})</h2>
+                <p>{token_resp.text[:300]}</p>
+                <p><a style="color:#f59e0b;" href="/#tab=hub">Вернуться в MCP Hub</a></p></body></html>""",
+            )
 
         token_data = token_resp.json()
         access_token = token_data.get("access_token")
         if not access_token:
-            return RedirectResponse(url="/#error=No+access+token+returned+by+Agensi")
+            return HTMLResponse(
+                status_code=502,
+                content="""<!DOCTYPE html><html><body style="background:#09090b;color:#f4f4f5;font-family:sans-serif;padding:40px;text-align:center;">
+                <h2 style="color:#f43f5e;">Сервер Agensi не вернул access_token</h2>
+                <p><a style="color:#f59e0b;" href="/#tab=hub">Вернуться в MCP Hub</a></p></body></html>""",
+            )
 
     # Upsert connection with bearer token
     conn = MCPConnection(
@@ -932,7 +975,59 @@ async def agensi_oauth_callback(
     )
     container.hub.connections.upsert(conn)
     container.hub.mcp_pool.invalidate("agensi")
-    return RedirectResponse(url="/#connected=agensi")
+
+    return HTMLResponse(
+        content="""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Agensi успешно подключен!</title>
+  <meta http-equiv="refresh" content="1; url=/#connected=agensi">
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #09090b;
+      color: #f4f4f5;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      margin: 0;
+      text-align: center;
+    }
+    .box {
+      background: #18181b;
+      border: 1px solid #27272a;
+      border-radius: 12px;
+      padding: 36px;
+      max-width: 450px;
+    }
+    h2 { color: #10b981; margin: 0 0 12px; }
+    p { color: #a1a1aa; font-size: 14px; margin: 0 0 16px; }
+    a { color: #f59e0b; text-decoration: none; font-weight: 500; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <h2>✅ Agensi успешно авторизован!</h2>
+    <p>Все инструменты маркетплейса активированы. Перенаправляем в Jarvis OS...</p>
+    <a href="/#connected=agensi">Нажмите сюда, если переход не произошел автоматически →</a>
+  </div>
+  <script>
+    if (window.opener) {
+      try { window.opener.postMessage({ type: "agensi_connected" }, "*"); } catch(e) {}
+    }
+    setTimeout(() => {
+      if (window.opener) {
+        try { window.close(); } catch(e) {}
+      }
+      window.location.href = "/#connected=agensi";
+    }, 1500);
+  </script>
+</body>
+</html>"""
+    )
 
 
 @router.post("/api/hub/agensi/exchange")

@@ -158,7 +158,17 @@ export function ConnectionsView() {
     if (window.location.hash.includes("connected=agensi")) {
       void refreshAgensi();
       void refresh();
+      setAgensiMsg({ type: "success", text: "Agensi успешно авторизован через OAuth! Все инструменты активны." });
     }
+    const onMessage = (e: MessageEvent) => {
+      if (e.data?.type === "agensi_connected") {
+        void refreshAgensi();
+        void refresh();
+        setAgensiMsg({ type: "success", text: "Agensi успешно авторизован через OAuth! Все инструменты активны." });
+      }
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
   }, [refreshAgensi, refresh]);
 
   const handleConnectAgensi = async () => {
@@ -167,7 +177,10 @@ export function ConnectionsView() {
     try {
       const res = await api.connectAgensi();
       if (res.auth_url) {
-        window.open(res.auth_url, "_blank");
+        const popup = window.open(res.auth_url, "agensi_oauth", "width=620,height=760,left=250,top=100");
+        if (!popup || popup.closed || typeof popup.closed === "undefined") {
+          window.open(res.auth_url, "_blank");
+        }
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to initiate Agensi OAuth sign-in");
