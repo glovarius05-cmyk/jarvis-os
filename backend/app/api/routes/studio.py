@@ -248,6 +248,7 @@ def write_brain_file(
 def get_brain_raw_file(
     path: str = Query(..., min_length=1),
     brain: str | None = Query(default=None),
+    download: bool = Query(default=False),
     container: AppContainer = Depends(get_container),
 ) -> FileResponse:
     b = _active_brain(container, brain)
@@ -257,4 +258,67 @@ def get_brain_raw_file(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not target.is_file():
         raise HTTPException(status_code=404, detail="File not found")
-    return FileResponse(target)
+    filename = target.name
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'} if download else {}
+    return FileResponse(target, filename=filename if download else None, headers=headers)
+
+
+@router.get("/api/brain/download-zip")
+def download_brain_zip(
+    brain: str | None = Query(default=None),
+    container: AppContainer = Depends(get_container),
+):
+    import io
+    import re
+    import zipfile
+    from fastapi.responses import Response
+
+    b = _active_brain(container, brain)
+    root = container.vaults.brain_path(b)
+    if not root.is_dir():
+        raise HTTPException(status_code=404, detail="Brain directory not found")
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for file in root.rglob("*"):
+            if file.is_file():
+                rel = file.relative_to(root)
+                if any(part.startswith(".git") for part in rel.parts):
+                    continue
+                zf.write(file, arcname=str(rel))
+
+    buf.seek(0)
+    zip_bytes = buf.getvalue()
+    safe_name = re.sub(r"[^\w\-]", "_", b)
+    return Response(
+        content=zip_bytes,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="jarvis_brain_{safe_name}.zip"',
+            "Content-Length": str(len(zip_bytes)),
+        },
+    )
+
+
+@router.get("/api/storage/files")
+def list_cloud_files(
+    container: AppContainer = Depends(get_container),
+) -> dict[str, Any]:
+    """List downloadable files and artifacts from VPS cloud storage."""
+    b = container.settings.load_public().get("active_brain") or "Brain Default"
+    brain_root = container.vaults.brain_path(b)
+    items = []
+    if brain_root.is_dir():
+        for f in sorted(brain_root.rglob("*")):
+            if f.is_file():
+                rel = f.relative_to(brain_root)
+                if any(p.startswith(".git") for p in rel.parts):
+                    continue
+                items.append({
+                    "name": f.name,
+                    "path": str(rel),
+                    "size": f.stat().st_size,
+                    "folder": str(rel.parent) if str(rel.parent) != "." else "",
+                    "download_url": f"/api/brain/raw?path={str(rel)}&download=true",
+                })
+    return {"brain": b, "files": items, "count": len(items)}

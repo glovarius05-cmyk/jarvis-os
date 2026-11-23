@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Brain, Cloud, FileText, GitBranch, Network, Radio, RefreshCw, Save, Search, X } from "lucide-react";
+import { Brain, Cloud, Download, FileText, FolderDown, GitBranch, Network, Radio, RefreshCw, Save, Search, X } from "lucide-react";
 import { api, type BrainItem, type BrainSearchHit, type BrainSyncStatus, type GitRemoteStatus, type GraphResponse } from "../api/client";
 
 interface BrainsViewProps {
@@ -319,6 +319,15 @@ export function BrainsView({ activeBrain, brains, onUpdated, t }: BrainsViewProp
                 <RefreshCw className="h-3 w-3" />
                 <span>{reindexStatus || "Re-index RAG"}</span>
               </button>
+              <a
+                href={api.getBrainZipUrl(activeBrain)}
+                download={`jarvis_brain_${activeBrain.replace(/\s+/g, "_")}.zip`}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-xs font-medium text-amber-300 hover:bg-amber-500/20 hover:text-amber-200 transition"
+                title="Скачать весь архив файлов и базы знаний из облака VPS (ZIP)"
+              >
+                <FolderDown className="h-3 w-3 text-amber-400" />
+                <span>Скачать всё (ZIP)</span>
+              </a>
             </div>
           </div>
 
@@ -467,13 +476,24 @@ export function BrainsView({ activeBrain, brains, onUpdated, t }: BrainsViewProp
                 </button>
               </div>
             </div>
-            <button
-              onClick={() => void handleSaveFile()}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500 px-3 py-1 text-xs font-medium text-zinc-950 hover:bg-amber-400"
-            >
-              <Save className="h-3.5 w-3.5" />
-              <span>{savedNotice ? "Saved" : "Save"}</span>
-            </button>
+            <div className="flex items-center gap-2">
+              <a
+                href={api.getBrainRawUrl(selectedPath, true)}
+                download={selectedPath.split("/").pop() || "file.md"}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 hover:bg-zinc-700 hover:text-white transition"
+                title="Скачать этот файл из облака VPS на компьютер"
+              >
+                <Download className="h-3.5 w-3.5 text-sky-400" />
+                <span>Скачать файл</span>
+              </a>
+              <button
+                onClick={() => void handleSaveFile()}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500 px-3 py-1 text-xs font-medium text-zinc-950 hover:bg-amber-400"
+              >
+                <Save className="h-3.5 w-3.5" />
+                <span>{savedNotice ? "Saved" : "Save"}</span>
+              </button>
+            </div>
           </div>
 
           {selectedPath === "memory/CHARACTER.md" && (

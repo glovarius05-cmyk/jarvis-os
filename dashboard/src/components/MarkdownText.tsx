@@ -1,5 +1,5 @@
 import { Fragment, useState } from "react";
-import { Check, Copy } from "lucide-react";
+import { Check, Copy, Download } from "lucide-react";
 
 function renderInline(line: string) {
   const parts = line.split(/(`[^`]+`|\*\*[^*]+\*\*)/g);
@@ -34,17 +34,66 @@ function CodeBlock({ lang, code }: { lang: string; code: string }) {
     window.setTimeout(() => setCopied(false), 1500);
   };
 
+  const handleDownload = () => {
+    const raw = (lang || "").toLowerCase().trim();
+    const extMap: Record<string, string> = {
+      python: "py",
+      py: "py",
+      javascript: "js",
+      js: "js",
+      typescript: "ts",
+      ts: "ts",
+      json: "json",
+      markdown: "md",
+      md: "md",
+      shell: "sh",
+      bash: "sh",
+      sh: "sh",
+      zsh: "sh",
+      html: "html",
+      css: "css",
+      sql: "sql",
+      yaml: "yaml",
+      yml: "yaml",
+      text: "txt",
+      txt: "txt",
+    };
+    const ext = extMap[raw] || (raw.length <= 4 && /^[a-z0-9]+$/.test(raw) ? raw : "txt");
+    const filename = `jarvis_file_${Date.now()}.${ext}`;
+    const blob = new Blob([code], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="my-2 overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950">
       <div className="flex items-center justify-between border-b border-zinc-800 px-3 py-1 text-xs text-zinc-400">
-        <span>{lang || "code"}</span>
-        <button
-          onClick={handleCopy}
-          className="flex items-center gap-1 text-zinc-400 hover:text-zinc-200"
-        >
-          {copied ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
-          <span>{copied ? "Copied" : "Copy"}</span>
-        </button>
+        <span className="font-mono">{lang || "code"}</span>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={handleDownload}
+            className="flex items-center gap-1 text-zinc-400 hover:text-sky-300 transition"
+            title="Скачать файл на компьютер"
+          >
+            <Download className="h-3.5 w-3.5" />
+            <span>Скачать</span>
+          </button>
+          <button
+            type="button"
+            onClick={handleCopy}
+            className="flex items-center gap-1 text-zinc-400 hover:text-zinc-200 transition"
+          >
+            {copied ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+            <span>{copied ? "Copied" : "Copy"}</span>
+          </button>
+        </div>
       </div>
       <pre className="overflow-x-auto p-3 font-mono text-xs leading-relaxed text-zinc-200">
         <code>{code}</code>

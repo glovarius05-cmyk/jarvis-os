@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Bot,
+  Download,
   FileCode,
   FileSpreadsheet,
   FileText,
@@ -883,6 +884,25 @@ export function ChatView({
                               <span>Голос</span>
                             </>
                           )}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const blob = new Blob([m.content], { type: "text/markdown;charset=utf-8" });
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement("a");
+                            a.href = url;
+                            a.download = `jarvis_response_${m.id || Date.now()}.md`;
+                            document.body.appendChild(a);
+                            a.click();
+                            document.body.removeChild(a);
+                            URL.revokeObjectURL(url);
+                          }}
+                          className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300 transition"
+                          title="Скачать текст ответа в .md на компьютер"
+                        >
+                          <Download className="h-3 w-3" />
+                          <span>Скачать</span>
                         </button>
                       </div>
                     )}

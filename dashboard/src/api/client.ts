@@ -620,6 +620,16 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ path, content }),
     }),
+  getBrainRawUrl: (path: string, download = true) =>
+    `/api/brain/raw?path=${encodeURIComponent(path)}${download ? "&download=true" : ""}`,
+  getBrainZipUrl: (brain?: string) =>
+    `/api/brain/download-zip${brain ? `?brain=${encodeURIComponent(brain)}` : ""}`,
+  listCloudFiles: () =>
+    requestJson<{
+      brain: string;
+      files: Array<{ name: string; path: string; size: number; folder: string; download_url: string }>;
+      count: number;
+    }>("/api/storage/files"),
   uploadChatFile: async (file: File, brain?: string): Promise<FileUploadResult> => {
     const formData = new FormData();
     formData.append("file", file);
