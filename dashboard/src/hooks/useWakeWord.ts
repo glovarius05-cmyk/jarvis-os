@@ -39,8 +39,9 @@ export function playWakeChime() {
   }
 }
 
-// Wake word pattern matching: "Привет Jarvis", "Привет Джарвис", "Hey Jarvis", "Джарвис"
-const WAKE_WORD_REGEX = /(?:привет|хай|салют|здравствуй|здравствуйте|эй|слушай|hey|hi|hello)?\s*[,.\s]*(?:джарвис|jarvis)/i;
+// Wake word pattern matching: "Привет Jarvis", "Привет Джарвис", "Hey Jarvis", "Джарвис", "Джарвиз"
+const WAKE_WORD_REGEX =
+  /(?:привет|хай|салют|здравствуй|здравствуйте|эй|слушай|hey|hi|hello)?\s*[,.\s]*(?:джарвис|jarvis|джарвиз|джейвис|джайвис)/i;
 
 interface UseWakeWordOptions {
   enabled: boolean;
@@ -120,11 +121,20 @@ export function useWakeWord({
       rec.onresult = (ev) => {
         if (cooldownRef.current) return;
 
+        // Collect both individual transcripts and combined text from recent chunks
+        const chunks: string[] = [];
         for (let i = 0; i < ev.results.length; ++i) {
           const item = ev.results[i]?.[0];
-          const transcript = item?.transcript || "";
-          if (!transcript) continue;
+          if (item?.transcript) {
+            chunks.push(item.transcript);
+          }
+        }
 
+        const fullTranscript = chunks.join(" ");
+        const latestChunk = chunks[chunks.length - 1] || "";
+        const targets = [fullTranscript, latestChunk].filter(Boolean);
+
+        for (const transcript of targets) {
           const match = transcript.match(WAKE_WORD_REGEX);
           if (match && typeof match.index === "number") {
             const trailing = transcript.slice(match.index + match[0].length).replace(/^[,.!?\s]+/, "").trim();
@@ -136,10 +146,10 @@ export function useWakeWord({
             setLastWakeTime(Date.now());
             onWakeRef.current(trailing);
 
-            // Cooldown for 2 seconds to avoid rapid duplicate triggers
+            // Cooldown for 2.5 seconds to avoid rapid duplicate triggers
             setTimeout(() => {
               cooldownRef.current = false;
-            }, 2000);
+            }, 2500);
             break;
           }
         }
@@ -154,21 +164,21 @@ export function useWakeWord({
           stop();
           return;
         }
+        if (ev?.error === "aborted" || ev?.error === "network") {
+          isRunningRef.current = false;
+        }
       };
 
       rec.onend = () => {
-        if (isRunningRef.current && !paused) {
-          // Restart recognition after gentle pause (browsers terminate long continuous recognition)
+        // Cleanly recreate a fresh SpeechRecognition instance on timeout/pause
+        isRunningRef.current = false;
+        recRef.current = null;
+        if (enabled && !paused) {
           setTimeout(() => {
-            if (isRunningRef.current && !paused) {
-              try {
-                rec.start();
-              } catch {
-                isRunningRef.current = false;
-                setListening(false);
-              }
+            if (!isRunningRef.current && !paused) {
+              start();
             }
-          }, 400);
+          }, 350);
         } else {
           setListening(false);
         }

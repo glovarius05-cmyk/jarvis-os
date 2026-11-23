@@ -58,6 +58,9 @@ export function ChannelsView() {
   const handleSaveVoice = async (e: React.FormEvent) => {
     e.preventDefault();
     await api.patchSettings({ voice: { tts_voice: ttsVoice, tts_rate: ttsRate } });
+    try {
+      localStorage.setItem("jarvis_selected_voice", ttsVoice);
+    } catch {}
     setSavedNotice(true);
     window.setTimeout(() => setSavedNotice(false), 1800);
   };
@@ -66,10 +69,23 @@ export function ChannelsView() {
     if (!voiceInput.trim()) return;
     const res = await api.voiceTurn(voiceInput.trim());
     setVoiceReply(JSON.stringify(res, null, 2));
-    if (!res.skipped && res.spoken_text && "speechSynthesis" in window) {
-      const utter = new SpeechSynthesisUtterance(res.spoken_text);
-      utter.lang = /[а-яА-ЯёЁ]/.test(res.spoken_text) ? "ru-RU" : "en-US";
-      window.speechSynthesis.speak(utter);
+    if (!res.skipped && res.spoken_text) {
+      try {
+        const audioRes = await api.synthesizeTTS(res.spoken_text, ttsVoice, ttsRate);
+        if (audioRes.audioUrl) {
+          const audio = new Audio(audioRes.audioUrl);
+          await audio.play().catch(() => {});
+          return;
+        }
+      } catch {}
+      if ("speechSynthesis" in window) {
+        const utter = new SpeechSynthesisUtterance(res.spoken_text);
+        utter.lang = /[а-яА-ЯёЁ]/.test(res.spoken_text) ? "ru-RU" : "en-US";
+        if (!ttsVoice.includes("Svetlana") && ttsVoice !== "browser-female") {
+          utter.pitch = 0.82;
+        }
+        window.speechSynthesis.speak(utter);
+      }
     }
   };
 
@@ -161,12 +177,16 @@ export function ChannelsView() {
         </div>
 
         <form onSubmit={handleSaveVoice} className="grid gap-3 sm:grid-cols-3">
-          <input
+          <select
             value={ttsVoice}
             onChange={(e) => setTtsVoice(e.target.value)}
-            placeholder="Edge TTS Voice"
             className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 font-mono text-xs text-zinc-100"
-          />
+          >
+            <option value="ru-RU-DmitryNeural">ru-RU-DmitryNeural (Мужской - Дмитрий)</option>
+            <option value="ru-RU-SvetlanaNeural">ru-RU-SvetlanaNeural (Женский - Светлана)</option>
+            <option value="browser-male">browser-male (Мужской баритон, Браузер)</option>
+            <option value="browser-female">browser-female (Женский, Браузер)</option>
+          </select>
           <input
             value={ttsRate}
             onChange={(e) => setTtsRate(e.target.value)}

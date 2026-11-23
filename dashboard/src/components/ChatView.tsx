@@ -6,8 +6,6 @@ import {
   FileText,
   Image as ImageIcon,
   Loader2,
-  Mic,
-  MicOff,
   Plus,
   Radio,
   Search,
@@ -129,9 +127,10 @@ export function ChatView({
 
   const [wakeWordEnabled, setWakeWordEnabled] = useState<boolean>(() => {
     try {
-      return localStorage.getItem("jarvis_wake_word_enabled") === "true";
+      const saved = localStorage.getItem("jarvis_wake_word_enabled");
+      return saved === null ? true : saved === "true";
     } catch {
-      return false;
+      return true;
     }
   });
 
@@ -242,6 +241,44 @@ export function ChatView({
     setLoadingAudioId(null);
   }, []);
 
+  const speakBrowserFallback = (text: string, messageId: number | string) => {
+    if ("speechSynthesis" in window) {
+      window.speechSynthesis.cancel();
+      setPlayingMessageId(messageId);
+      const utter = new SpeechSynthesisUtterance(text);
+      utter.lang = /[а-яА-ЯёЁ]/.test(text) ? "ru-RU" : "en-US";
+
+      const savedVoice = localStorage.getItem("jarvis_selected_voice") || "ru-RU-DmitryNeural";
+      const isMale = !savedVoice.includes("Svetlana") && savedVoice !== "browser-female";
+      const voices = window.speechSynthesis.getVoices();
+      const ruVoices = voices.filter((v) => v.lang.toLowerCase().startsWith("ru"));
+
+      if (isMale) {
+        const maleVoice = ruVoices.find((v) =>
+          /yuri|pavel|dmitry|александр|максим|павел|юрий|муж|male|man/i.test(v.name)
+        );
+        if (maleVoice) utter.voice = maleVoice;
+        else if (ruVoices.length > 0) utter.voice = ruVoices[0];
+        utter.pitch = 0.82;
+        utter.rate = 1.0;
+      } else {
+        const femaleVoice = ruVoices.find((v) =>
+          /milena|svetlana|katya|irina|жен|female/i.test(v.name)
+        );
+        if (femaleVoice) utter.voice = femaleVoice;
+        else if (ruVoices.length > 0) utter.voice = ruVoices[0];
+        utter.pitch = 1.05;
+        utter.rate = 1.02;
+      }
+
+      utter.onend = () => setPlayingMessageId(null);
+      utter.onerror = () => setPlayingMessageId(null);
+      window.speechSynthesis.speak(utter);
+    } else {
+      setPlayingMessageId(null);
+    }
+  };
+
   const playSpeech = useCallback(
     async (messageId: number | string, text: string) => {
       if (playingMessageId === messageId) {
@@ -251,7 +288,8 @@ export function ChatView({
       stopSpeech();
       setLoadingAudioId(messageId);
       try {
-        const res = await api.synthesizeTTS(text);
+        const savedVoice = localStorage.getItem("jarvis_selected_voice") || "ru-RU-DmitryNeural";
+        const res = await api.synthesizeTTS(text, savedVoice);
         setLoadingAudioId(null);
         if (res.audioUrl) {
           const audio = new Audio(res.audioUrl);
@@ -261,25 +299,14 @@ export function ChatView({
             audioRef.current = null;
           };
           audio.onerror = () => {
-            if ("speechSynthesis" in window) {
-              const utter = new SpeechSynthesisUtterance(text);
-              utter.lang = /[а-яА-ЯёЁ]/.test(text) ? "ru-RU" : "en-US";
-              utter.onend = () => setPlayingMessageId(null);
-              utter.onerror = () => setPlayingMessageId(null);
-              window.speechSynthesis.speak(utter);
-            } else {
-              setPlayingMessageId(null);
-            }
+            speakBrowserFallback(text, messageId);
           };
           setPlayingMessageId(messageId);
-          await audio.play();
-        } else if (res.fallbackText && "speechSynthesis" in window) {
-          setPlayingMessageId(messageId);
-          const utter = new SpeechSynthesisUtterance(res.fallbackText);
-          utter.lang = /[а-яА-ЯёЁ]/.test(res.fallbackText) ? "ru-RU" : "en-US";
-          utter.onend = () => setPlayingMessageId(null);
-          utter.onerror = () => setPlayingMessageId(null);
-          window.speechSynthesis.speak(utter);
+          await audio.play().catch(() => {
+            speakBrowserFallback(text, messageId);
+          });
+        } else {
+          speakBrowserFallback(res.fallbackText || text, messageId);
         }
       } catch (err) {
         console.error("TTS playback error", err);
@@ -868,16 +895,6 @@ export function ChatView({
               <span>{wakeWordEnabled ? "👂 'Привет Jarvis!'" : "Команда 'Привет Jarvis!'"}</span>
             </button>
 
-            <button
-              type="button"
-              onClick={() => void handleOpenVoiceCall("")}
-              title="Начать живой голосовой диалог с Джарвисом в реальном времени"
-              className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/50 bg-gradient-to-r from-amber-500/20 via-orange-500/20 to-amber-500/20 px-3 py-1.5 text-xs font-semibold text-amber-300 shadow-sm transition hover:from-amber-500/30 hover:to-orange-500/30 hover:border-amber-400 focus:outline-none"
-            >
-              <Radio className="h-3.5 w-3.5 text-amber-400 animate-pulse" />
-              <span>{t("chat.voiceCall") || "Общение голосом"}</span>
-            </button>
-
             <span className="flex items-center gap-1.5 text-xs text-zinc-400">
               <span className={`h-2 w-2 rounded-full ${wsConnected ? "bg-emerald-400" : "bg-amber-400"}`} />
               {wsConnected ? t("status.wsConnected") : t("status.wsReconnecting")}
@@ -1145,37 +1162,6 @@ export function ChatView({
               )}
             </button>
 
-            {/* Microphone Button */}
-            <button
-              type="button"
-              onClick={handleMicToggle}
-              title={listening ? t("chat.micStop") : t("chat.micStart")}
-              className={`relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border transition ${
-                listening
-                  ? "border-rose-500 bg-rose-500/20 text-rose-300 shadow-lg shadow-rose-500/20"
-                  : "border-zinc-800 bg-zinc-900 text-zinc-300 hover:border-amber-500"
-              }`}
-            >
-              {listening ? (
-                <span className="relative flex h-4 w-4 items-center justify-center">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-rose-400 opacity-75" />
-                  <MicOff className="relative h-4 w-4 text-rose-400" />
-                </span>
-              ) : (
-                <Mic className="h-4 w-4" />
-              )}
-            </button>
-
-            {/* Quick Live Voice Button */}
-            <button
-              type="button"
-              onClick={() => void handleOpenVoiceCall("")}
-              title="Общение голосом в реальном времени (Live Voice)"
-              className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-amber-500/40 bg-gradient-to-br from-amber-500/15 to-orange-500/15 text-amber-300 hover:border-amber-400 hover:from-amber-500/25 hover:to-orange-500/25 transition shadow-sm"
-            >
-              <Radio className="h-4 w-4 animate-pulse text-amber-400" />
-            </button>
-
             {/* Input Textarea */}
             <textarea
               rows={2}
@@ -1191,6 +1177,17 @@ export function ChatView({
               placeholder={t("chat.placeholder")}
               className="flex-1 resize-none rounded-xl border border-zinc-800 bg-zinc-900 px-3.5 py-2.5 text-sm text-zinc-100 outline-none focus:border-amber-500"
             />
+
+            {/* Dedicated Voice Button: Talk with Jarvis */}
+            <button
+              type="button"
+              onClick={() => void handleOpenVoiceCall("")}
+              title="Начать живое голосовое общение с Джарвисом"
+              className="relative flex h-11 items-center gap-2 rounded-xl border border-amber-500/50 bg-gradient-to-r from-amber-500/20 via-orange-500/20 to-amber-500/20 px-3.5 text-xs font-semibold text-amber-300 shadow-md transition hover:from-amber-500/30 hover:to-orange-500/30 hover:border-amber-400 active:scale-95 shrink-0"
+            >
+              <Radio className="h-4 w-4 animate-pulse text-amber-400" />
+              <span>Общение с Джарвисом</span>
+            </button>
 
             {/* Send or Stop Button */}
             {activeTurn ? (

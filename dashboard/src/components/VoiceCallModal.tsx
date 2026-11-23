@@ -126,7 +126,13 @@ export function VoiceCallModal({
   const [status, setStatus] = useState<CallStatus>("idle");
   const [handsFree, setHandsFree] = useState(true);
   const [isMuted, setIsMuted] = useState(false);
-  const [selectedVoice, setSelectedVoice] = useState<string>("ru-RU-DmitryNeural");
+  const [selectedVoice, setSelectedVoice] = useState<string>(() => {
+    try {
+      return localStorage.getItem("jarvis_selected_voice") || "ru-RU-DmitryNeural";
+    } catch {
+      return "ru-RU-DmitryNeural";
+    }
+  });
   const [liveTranscript, setLiveTranscript] = useState("");
   const [lastUserSpeech, setLastUserSpeech] = useState("");
   const [lastJarvisReply, setLastJarvisReply] = useState("");
@@ -187,11 +193,11 @@ export function VoiceCallModal({
       setLastJarvisReply(clean);
 
       try {
-        if (selectedVoice !== "browser") {
-          // Timeout race at 3.5s so we don't stall in silence if Edge TTS is slow
+        if (!selectedVoice.startsWith("browser")) {
+          // Timeout race at 10s (Edge TTS on longer replies takes ~3-6s, so 3.5s was timing out prematurely!)
           const ttsPromise = api.synthesizeTTS(clean, selectedVoice);
           const timeoutPromise = new Promise<{ audioUrl?: string }>((resolve) =>
-            setTimeout(() => resolve({}), 3500)
+            setTimeout(() => resolve({}), 10000)
           );
           const res = await Promise.race([ttsPromise, timeoutPromise]);
           if (res.audioUrl && isSpeakingRef.current) {
@@ -244,7 +250,37 @@ export function VoiceCallModal({
       window.speechSynthesis.cancel();
       const utter = new SpeechSynthesisUtterance(text);
       utter.lang = /[а-яА-ЯёЁ]/.test(text) ? "ru-RU" : "en-US";
-      utter.rate = 1.05;
+
+      // Choose male voice and configure pitch for authentic masculine baritone
+      const isMale = !selectedVoice.includes("Svetlana") && selectedVoice !== "browser-female";
+      const voices = window.speechSynthesis.getVoices();
+      const ruVoices = voices.filter((v) => v.lang.toLowerCase().startsWith("ru"));
+
+      if (isMale) {
+        const maleRuVoice = ruVoices.find((v) =>
+          /yuri|pavel|dmitry|александр|максим|павел|юрий|муж|male|man/i.test(v.name)
+        );
+        if (maleRuVoice) {
+          utter.voice = maleRuVoice;
+        } else if (ruVoices.length > 0) {
+          utter.voice = ruVoices[0];
+        }
+        // Pitch 0.82 gives a deep, calm male assistant tone
+        utter.pitch = 0.82;
+        utter.rate = 1.0;
+      } else {
+        const femaleRuVoice = ruVoices.find((v) =>
+          /milena|svetlana|katya|irina|жен|female/i.test(v.name)
+        );
+        if (femaleRuVoice) {
+          utter.voice = femaleRuVoice;
+        } else if (ruVoices.length > 0) {
+          utter.voice = ruVoices[0];
+        }
+        utter.pitch = 1.05;
+        utter.rate = 1.02;
+      }
+
       utter.onend = () => {
         isSpeakingRef.current = false;
         if (isOpen && handsFree && !isMuted) {
@@ -736,13 +772,21 @@ export function VoiceCallModal({
               {/* Voice Selector */}
               <select
                 value={selectedVoice}
-                onChange={(e) => setSelectedVoice(e.target.value)}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setSelectedVoice(val);
+                  try {
+                    localStorage.setItem("jarvis_selected_voice", val);
+                  } catch {}
+                  void api.patchSettings({ voice: { tts_voice: val, tts_rate: "+5%" } });
+                }}
                 className="rounded-lg border border-zinc-700 bg-zinc-800 px-2.5 py-1.5 text-xs text-zinc-300 outline-none focus:border-amber-500"
                 title="Выбор голоса синтеза речи"
               >
-                <option value="ru-RU-DmitryNeural">Голос: Дмитрий (Edge Neural)</option>
-                <option value="ru-RU-SvetlanaNeural">Голос: Светлана (Edge Neural)</option>
-                <option value="browser">Голос: Браузерный TTS</option>
+                <option value="ru-RU-DmitryNeural">Голос: Дмитрий (Мужской, Edge Neural)</option>
+                <option value="ru-RU-SvetlanaNeural">Голос: Светлана (Женский, Edge Neural)</option>
+                <option value="browser-male">Голос: Мужской баритон (Браузер)</option>
+                <option value="browser-female">Голос: Женский (Браузер)</option>
               </select>
             </div>
 
