@@ -6,8 +6,9 @@ import {
   FileText,
   Image as ImageIcon,
   Loader2,
+  Mic,
+  MicOff,
   Plus,
-  Radio,
   Search,
   Send,
   Square,
@@ -25,9 +26,7 @@ import {
   type SessionItem,
 } from "../api/client";
 import type { LiveTurnState } from "../hooks/useChatSocket";
-import { useWakeWord } from "../hooks/useWakeWord";
 import { MarkdownText } from "./MarkdownText";
-import { VoiceCallModal } from "./VoiceCallModal";
 
 export interface AttachedFileItem {
   id: string;
@@ -122,17 +121,6 @@ export function ChatView({
   const [attachedFiles, setAttachedFiles] = useState<AttachedFileItem[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [voiceCallOpen, setVoiceCallOpen] = useState(false);
-  const [initialVoiceUtterance, setInitialVoiceUtterance] = useState("");
-
-  const [wakeWordEnabled, setWakeWordEnabled] = useState<boolean>(() => {
-    try {
-      const saved = localStorage.getItem("jarvis_wake_word_enabled");
-      return saved === null ? true : saved === "true";
-    } catch {
-      return true;
-    }
-  });
 
   useEffect(() => {
     setProvider(defaultProvider);
@@ -147,33 +135,6 @@ export function ChatView({
       return res.sessions[0]?.id ?? "";
     });
   }, [activeBrain]);
-
-  const handleOpenVoiceCall = useCallback(
-    async (trailingUtterance = "") => {
-      let sid = selectedId;
-      if (!sid) {
-        try {
-          const created = await api.createSession({ brain: activeBrain, title: t("chat.new") });
-          await loadSessions();
-          setSelectedId(created.id);
-          sid = created.id;
-        } catch (e) {
-          console.error("Failed to create session for voice call", e);
-        }
-      }
-      setInitialVoiceUtterance(trailingUtterance);
-      setVoiceCallOpen(true);
-    },
-    [activeBrain, loadSessions, selectedId, t]
-  );
-
-  const { listening: wakeWordListening, supported: wakeWordSupported } = useWakeWord({
-    enabled: wakeWordEnabled,
-    paused: voiceCallOpen,
-    onWake: (trailingUtterance) => {
-      void handleOpenVoiceCall(trailingUtterance || "");
-    },
-  });
 
   const loadMessages = useCallback(async (sid: string) => {
     if (!sid) {
@@ -317,14 +278,14 @@ export function ChatView({
   );
 
   useEffect(() => {
-    if (prevTurnRef.current && !activeTurn && autoSpeak && !voiceCallOpen) {
+    if (prevTurnRef.current && !activeTurn && autoSpeak) {
       const finishedText = prevTurnRef.current.text;
       if (finishedText && finishedText.trim()) {
         void playSpeech("latest", finishedText);
       }
     }
     prevTurnRef.current = activeTurn;
-  }, [activeTurn, autoSpeak, playSpeech, voiceCallOpen]);
+  }, [activeTurn, autoSpeak, playSpeech]);
 
   useEffect(() => {
     return () => {
@@ -860,41 +821,6 @@ export function ChatView({
               <span>{t("chat.autoSpeak")}</span>
             </button>
 
-            <button
-              type="button"
-              disabled={!wakeWordSupported}
-              onClick={() => {
-                const next = !wakeWordEnabled;
-                setWakeWordEnabled(next);
-                try {
-                  localStorage.setItem("jarvis_wake_word_enabled", String(next));
-                } catch {}
-              }}
-              title={
-                !wakeWordSupported
-                  ? "Браузер не поддерживает распознавание речи"
-                  : wakeWordEnabled
-                  ? "Ожидание фразы 'Привет Jarvis!' активно (нажмите для выключения)"
-                  : "Включить вызов голосовой фразой 'Привет Jarvis!'"
-              }
-              className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition ${
-                wakeWordEnabled
-                  ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-300"
-                  : "border-zinc-800 bg-zinc-900 text-zinc-400 hover:text-zinc-200"
-              } disabled:opacity-50`}
-            >
-              <span
-                className={`h-2 w-2 rounded-full ${
-                  wakeWordListening
-                    ? "bg-emerald-400 animate-ping"
-                    : wakeWordEnabled
-                    ? "bg-emerald-400"
-                    : "bg-zinc-600"
-                }`}
-              />
-              <span>{wakeWordEnabled ? "👂 'Привет Jarvis!'" : "Команда 'Привет Jarvis!'"}</span>
-            </button>
-
             <span className="flex items-center gap-1.5 text-xs text-zinc-400">
               <span className={`h-2 w-2 rounded-full ${wsConnected ? "bg-emerald-400" : "bg-amber-400"}`} />
               {wsConnected ? t("status.wsConnected") : t("status.wsReconnecting")}
@@ -1162,6 +1088,27 @@ export function ChatView({
               )}
             </button>
 
+            {/* Microphone Button for Voice Dictation */}
+            <button
+              type="button"
+              onClick={handleMicToggle}
+              title={listening ? t("chat.micStop") : t("chat.micStart")}
+              className={`relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border transition active:scale-95 ${
+                listening
+                  ? "border-rose-500 bg-rose-500/20 text-rose-300 shadow-lg shadow-rose-500/20"
+                  : "border-zinc-800 bg-zinc-900 text-zinc-300 hover:border-amber-500 hover:text-amber-400"
+              }`}
+            >
+              {listening ? (
+                <span className="relative flex h-4 w-4 items-center justify-center">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-rose-400 opacity-75" />
+                  <MicOff className="relative h-4 w-4 text-rose-400" />
+                </span>
+              ) : (
+                <Mic className="h-5 w-5" />
+              )}
+            </button>
+
             {/* Input Textarea */}
             <textarea
               rows={2}
@@ -1177,17 +1124,6 @@ export function ChatView({
               placeholder={t("chat.placeholder")}
               className="flex-1 resize-none rounded-xl border border-zinc-800 bg-zinc-900 px-3.5 py-2.5 text-sm text-zinc-100 outline-none focus:border-amber-500"
             />
-
-            {/* Dedicated Voice Button: Talk with Jarvis */}
-            <button
-              type="button"
-              onClick={() => void handleOpenVoiceCall("")}
-              title="Начать живое голосовое общение с Джарвисом"
-              className="relative flex h-11 items-center gap-2 rounded-xl border border-amber-500/50 bg-gradient-to-r from-amber-500/20 via-orange-500/20 to-amber-500/20 px-3.5 text-xs font-semibold text-amber-300 shadow-md transition hover:from-amber-500/30 hover:to-orange-500/30 hover:border-amber-400 active:scale-95 shrink-0"
-            >
-              <Radio className="h-4 w-4 animate-pulse text-amber-400" />
-              <span>Общение с Джарвисом</span>
-            </button>
 
             {/* Send or Stop Button */}
             {activeTurn ? (
@@ -1211,27 +1147,6 @@ export function ChatView({
           </div>
         </div>
       </section>
-
-      {/* Interactive Voice Call Dialog */}
-      <VoiceCallModal
-        isOpen={voiceCallOpen}
-        onClose={() => {
-          setVoiceCallOpen(false);
-          setInitialVoiceUtterance("");
-        }}
-        activeBrain={activeBrain}
-        provider={provider}
-        model={model}
-        runMode={runMode}
-        sessionId={selectedId}
-        initialUtterance={initialVoiceUtterance}
-        onSend={onSend}
-        activeTurn={activeTurn}
-        onStopTurn={onStop}
-        messages={messages}
-        t={t}
-        onSessionCreated={(id) => setSelectedId(id)}
-      />
     </div>
   );
 }
