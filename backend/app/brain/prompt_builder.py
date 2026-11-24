@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from app.brain.character import CharacterManager
     from app.brain.core_memory import CoreMemoryManager
     from app.brain.skills import SkillStore
+    from app.config import SettingsStore
 
 MEMORY_MAX_CHARS = 8_000
 
@@ -49,12 +50,14 @@ class PromptBuilder:
         skills: "SkillStore | None" = None,
         core_memory: "CoreMemoryManager | None" = None,
         characters: "CharacterManager | None" = None,
+        settings: "SettingsStore | None" = None,
     ) -> None:
         self._kernel_path = prompts_dir / "kernel.md"
         self._vaults = vaults
         self._skills = skills
         self._core_memory = core_memory
         self._characters = characters
+        self._settings = settings
 
     def build(
         self,
@@ -143,6 +146,27 @@ class PromptBuilder:
             skill_idx = self._skills.build_prompt_index(brain, compact=(provider == "local-llama"))
             if skill_idx:
                 sections.append(f"# === AVAILABLE SKILLS ===\n{skill_idx}")
+
+        # 3c. Connected user integrations & accounts (Gmail, Calendar, etc.)
+        if self._settings is not None:
+            try:
+                cfg = self._settings.load()
+                account_emails = cfg.get("composio_account_emails") or {}
+                connected_apps = cfg.get("composio_connected_apps") or []
+                if account_emails or connected_apps:
+                    lines = ["# === CONNECTED USER ACCOUNTS & INTEGRATIONS ==="]
+                    lines.append("The owner has connected and authorized the following external accounts via Composio:")
+                    all_apps = set(connected_apps) | set(account_emails.keys())
+                    for app in sorted(all_apps):
+                        em = account_emails.get(app)
+                        if em:
+                            lines.append(f"- {app.upper()}: connected (user email / identifier: `{em}`)")
+                        else:
+                            lines.append(f"- {app.upper()}: connected")
+                    lines.append("You can directly search emails, read messages, manage calendar, or perform actions for these accounts using available tools.")
+                    sections.append("\n".join(lines))
+            except Exception:
+                pass
 
         # 4. Channel block
         ch_desc = _CHANNEL_INSTRUCTIONS.get(channel, _CHANNEL_INSTRUCTIONS["web"])

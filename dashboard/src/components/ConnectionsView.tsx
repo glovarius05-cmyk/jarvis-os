@@ -91,6 +91,9 @@ export function ConnectionsView() {
   const [composioLoading, setComposioLoading] = useState(false);
   const [composioMaskedKey, setComposioMaskedKey] = useState<string | null>(null);
   const [composioMsg, setComposioMsg] = useState<string | null>(null);
+  const [editingEmailApp, setEditingEmailApp] = useState<string | null>(null);
+  const [emailInput, setEmailInput] = useState("");
+  const [savingEmail, setSavingEmail] = useState(false);
 
   // Agensi OAuth State
   const [agensiStatus, setAgensiStatus] = useState<{ connected: boolean; authenticated: boolean; tools_count: number } | null>(null);
@@ -301,6 +304,19 @@ export function ConnectionsView() {
       await refreshComposio();
     } catch (err) {
       setError(err instanceof Error ? err.message : `Failed to update status for ${appId}`);
+    }
+  };
+
+  const handleSaveAccountEmail = async (appId: string) => {
+    setSavingEmail(true);
+    try {
+      await api.setComposioAccountEmail(appId, emailInput.trim());
+      setEditingEmailApp(null);
+      await refreshComposio();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : `Failed to save email for ${appId}`);
+    } finally {
+      setSavingEmail(false);
     }
   };
 
@@ -619,10 +635,66 @@ export function ConnectionsView() {
                     )}
                   </div>
                   <p className="mt-1 text-[11px] text-zinc-400">{platform.desc}</p>
-                  {accountDetail && (
-                    <p className="mt-1 truncate font-mono text-[10px] text-emerald-400/90" title={accountDetail}>
-                      {accountDetail}
-                    </p>
+                  {isConnected && (
+                    <div className="mt-2 pt-2 border-t border-zinc-800/50">
+                      {editingEmailApp === platform.id ? (
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="text"
+                            value={emailInput}
+                            onChange={(e) => setEmailInput(e.target.value)}
+                            placeholder="your.email@gmail.com"
+                            className="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-0.5 font-mono text-[11px] text-zinc-100 placeholder:text-zinc-600 focus:border-sky-500 focus:outline-none"
+                            autoFocus
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                void handleSaveAccountEmail(platform.id);
+                              } else if (e.key === "Escape") {
+                                setEditingEmailApp(null);
+                              }
+                            }}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => void handleSaveAccountEmail(platform.id)}
+                            disabled={savingEmail}
+                            className="rounded bg-sky-500 px-2 py-0.5 text-[10px] font-semibold text-zinc-950 hover:bg-sky-400 disabled:opacity-50"
+                          >
+                            OK
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setEditingEmailApp(null)}
+                            className="rounded border border-zinc-700 px-1.5 py-0.5 text-[10px] text-zinc-400 hover:text-white"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-between gap-1 text-[11px]">
+                          {accountDetail ? (
+                            <span className="truncate font-mono text-emerald-400" title={accountDetail}>
+                              📧 {accountDetail}
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-amber-400/80 italic">
+                              Email не указан
+                            </span>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingEmailApp(platform.id);
+                              setEmailInput(matchingAcc?.email || "");
+                            }}
+                            className="ml-auto shrink-0 text-[10px] font-medium text-sky-400 hover:text-sky-300 hover:underline"
+                          >
+                            {accountDetail ? "Изменить" : "Указать email"}
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
                 <div className="mt-3 pt-2 border-t border-zinc-800/60 space-y-1.5">

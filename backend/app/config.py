@@ -83,6 +83,7 @@ def _default_settings() -> dict[str, Any]:
         "telegram_bot_token": "",
         "composio_api_key": "",
         "composio_connected_apps": [],
+        "composio_account_emails": {},
         "perplexity_api_key": "",
         "deepseek_api_key": "",
         "moonshot_api_key": "",

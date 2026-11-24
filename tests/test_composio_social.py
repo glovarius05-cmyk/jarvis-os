@@ -293,5 +293,47 @@ async def test_composio_gmail_and_calendar_tools_action_execution(tmp_path: Path
     assert cal_calls[0]["json"].get("connected_account_id") == "ca_test_cal_67890"
 
 
+def test_composio_email_api_and_prompt_injection(tmp_path: Path) -> None:
+    from fastapi import FastAPI
+    from starlette.testclient import TestClient
+    from app.api.deps import get_container
+
+    code_dir = Path(__file__).resolve().parent.parent
+    ctr = AppContainer.build(
+        code_dir=code_dir,
+        state_dir=tmp_path / "state",
+        brains_dir=tmp_path / "brains",
+    )
+    app = FastAPI()
+    app.include_router(hub_router)
+    app.dependency_overrides[get_container] = lambda: ctr
+    client = TestClient(app)
+
+    # 1. Initially empty
+    assert ctr.settings.load().get("composio_account_emails") == {}
+
+    # 2. Set email via POST /api/hub/composio/email
+    res = client.post("/api/hub/composio/email", json={"app": "gmail", "email": "testowner@gmail.com"})
+    assert res.status_code == 200
+    data = res.json()
+    assert data["ok"] is True
+    assert data["app"] == "gmail"
+    assert data["email"] == "testowner@gmail.com"
+    assert data["composio_account_emails"]["gmail"] == "testowner@gmail.com"
+
+    # 3. Settings on disk updated
+    assert ctr.settings.load()["composio_account_emails"]["gmail"] == "testowner@gmail.com"
+
+    # 4. Check prompt builder system prompt includes the connected email
+    prompt = ctr.prompt_builder.build(
+        brain="Brain Default",
+        provider="google",
+        model="gemini-3.5-flash",
+    )
+    assert "# === CONNECTED USER ACCOUNTS & INTEGRATIONS ===" in prompt
+    assert "GMAIL: connected (user email / identifier: `testowner@gmail.com`)" in prompt
+
+
+
 
 

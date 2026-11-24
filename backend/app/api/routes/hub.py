@@ -323,7 +323,7 @@ def extract_email_from_obj(it: Any) -> str:
     """Extract email address from connected account dictionary or structure."""
     if not isinstance(it, dict):
         return ""
-    for k in ("email", "user_email", "account_email", "emailAddress", "email_address", "email_id"):
+    for k in ("email", "user_email", "account_email", "emailAddress", "email_address", "email_id", "label", "user_uuid", "login"):
         v = it.get(k)
         if isinstance(v, str) and "@" in v:
             return v.strip()
@@ -331,14 +331,16 @@ def extract_email_from_obj(it: Any) -> str:
         v = it.get(k)
         if isinstance(v, str) and "@" in v:
             return v.strip()
-    for parent in ("state", "params", "data", "metadata", "profile", "auth_config", "connection_data"):
+    for parent in ("state", "params", "data", "metadata", "profile", "auth_config", "connection_data", "custom_fields"):
         sub = it.get(parent)
         if isinstance(sub, dict):
             val = sub.get("val") if isinstance(sub.get("val"), dict) else sub
-            for k in ("email", "user_email", "account_email", "emailAddress", "email_address", "identifier"):
+            for k in ("email", "user_email", "account_email", "emailAddress", "email_address", "identifier", "label", "user"):
                 v = val.get(k)
                 if isinstance(v, str) and "@" in v:
                     return v.strip()
+                if isinstance(v, dict) and isinstance(v.get("email"), str) and "@" in str(v.get("email")):
+                    return str(v["email"]).strip()
     try:
         raw_dump = json.dumps(it)
         import re
@@ -350,6 +352,44 @@ def extract_email_from_obj(it: Any) -> str:
     except Exception:
         pass
     return ""
+
+
+def _persist_found_email(container: AppContainer, app_slug: str, email: str) -> None:
+    """Helper to store discovered account email in settings."""
+    clean = (email or "").strip()
+    if not clean or "@" not in clean:
+        return
+    try:
+        cfg = container.settings.load()
+        cur_emails = dict(cfg.get("composio_account_emails") or {})
+        if cur_emails.get(app_slug) != clean:
+            cur_emails[app_slug] = clean
+            container.settings.update({"composio_account_emails": cur_emails})
+    except Exception:
+        pass
+
+
+class ComposioSetEmailPayload(BaseModel):
+    app: str = Field(..., min_length=1, max_length=50)
+    email: str = Field(default="", max_length=200)
+
+
+@router.post("/api/hub/composio/email")
+async def set_composio_account_email(
+    payload: ComposioSetEmailPayload,
+    container: AppContainer = Depends(get_container),
+) -> dict[str, Any]:
+    """Persist user-specified email for a connected Composio app."""
+    app_slug = extract_app_slug(payload.app)
+    cfg = container.settings.load()
+    existing_emails = dict(cfg.get("composio_account_emails") or {})
+    clean_email = payload.email.strip()
+    if clean_email:
+        existing_emails[app_slug] = clean_email
+    else:
+        existing_emails.pop(app_slug, None)
+    container.settings.update({"composio_account_emails": existing_emails})
+    return {"ok": True, "app": app_slug, "email": clean_email, "composio_account_emails": existing_emails}
 
 
 class ComposioConfirmPayload(BaseModel):
@@ -605,16 +645,88 @@ async def get_composio_status(container: AppContainer = Depends(get_container)) 
             except Exception:
                 continue
 
-    # 3. Merge locally persisted / user confirmed connections
+    # 3. Merge locally persisted / user confirmed connections & saved emails
+    saved_emails: dict[str, str] = {}
     try:
-        saved_apps = container.settings.load().get("composio_connected_apps") or []
+        cfg = container.settings.load()
+        saved_apps = cfg.get("composio_connected_apps") or []
         if isinstance(saved_apps, list):
             for s_app in saved_apps:
                 s_slug = extract_app_slug(str(s_app))
                 if s_slug and s_slug not in accounts_by_app:
                     accounts_by_app[s_slug] = {"app": s_slug, "status": "ACTIVE", "id": f"local_{s_slug}"}
+
+        saved_emails = dict(cfg.get("composio_account_emails") or {})
+        for app_slug, acc_entry in accounts_by_app.items():
+            if not acc_entry.get("email") and app_slug in saved_emails:
+                acc_entry["email"] = saved_emails[app_slug]
     except Exception:
         pass
+
+    # 4. Attempt deep account details & profile discovery for accounts missing an email
+    for app_slug, acc_entry in list(accounts_by_app.items()):
+        if not acc_entry.get("email"):
+            ca_id = str(acc_entry.get("id") or "")
+            if ca_id.startswith("ca_"):
+                for r_hdrs in rest_headers[:2]:
+                    try:
+                        async with httpx.AsyncClient(timeout=4.0) as client:
+                            ca_res = await client.get(
+                                f"https://backend.composio.dev/api/v3.1/connected_accounts/{ca_id}",
+                                headers=r_hdrs,
+                            )
+                            if ca_res.status_code == 200:
+                                ext = extract_email_from_obj(ca_res.json())
+                                if ext:
+                                    acc_entry["email"] = ext
+                                    _persist_found_email(container, app_slug, ext)
+                                    break
+                    except Exception:
+                        pass
+
+            # Deep Gmail profile discovery via GMAIL_GET_PROFILE tool if still missing
+            if app_slug == "gmail" and not acc_entry.get("email"):
+                for m_hdrs in mcp_headers_to_try:
+                    try:
+                        async with httpx.AsyncClient(timeout=5.0) as client:
+                            p_res = await client.post(
+                                "https://connect.composio.dev/mcp",
+                                json={
+                                    "jsonrpc": "2.0",
+                                    "method": "tools/call",
+                                    "params": {
+                                        "name": "GMAIL_GET_PROFILE",
+                                        "arguments": {},
+                                    },
+                                    "id": 98,
+                                },
+                                headers=m_hdrs,
+                            )
+                            if p_res.status_code == 200:
+                                p_data = p_res.json().get("result", {})
+                                p_text = ""
+                                if isinstance(p_data, dict):
+                                    c_arr = p_data.get("content", [])
+                                    if isinstance(c_arr, list) and c_arr:
+                                        p_text = c_arr[0].get("text", "")
+                                if not p_text and isinstance(p_data, str):
+                                    p_text = p_data
+                                if p_text:
+                                    try:
+                                        parsed = json.loads(p_text)
+                                        em = (
+                                            parsed.get("emailAddress")
+                                            or parsed.get("email")
+                                            or extract_email_from_obj(parsed)
+                                        )
+                                        if em and "@" in str(em):
+                                            acc_entry["email"] = str(em).strip()
+                                            _persist_found_email(container, "gmail", str(em).strip())
+                                            break
+                                    except Exception:
+                                        pass
+                    except Exception:
+                        pass
 
     if mcp_succeeded or rest_succeeded or accounts_by_app:
         accounts = list(accounts_by_app.values())
@@ -627,6 +739,7 @@ async def get_composio_status(container: AppContainer = Depends(get_container)) 
             "valid": True,
             "masked_key": masked_key,
             "accounts": accounts,
+            "composio_account_emails": saved_emails,
             "message": msg,
         }
 

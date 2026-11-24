@@ -224,15 +224,20 @@ async def _get_connected_apps(ctx, api_key: str) -> dict[str, dict[str, Any]]:
 
     # 1. Check locally confirmed / persisted connections in settings
     settings = ctx.services.get("settings")
+    saved_emails: dict[str, str] = {}
     if settings is not None:
         try:
             cfg = settings.load()
             saved_apps = cfg.get("composio_connected_apps") or []
+            saved_emails = dict(cfg.get("composio_account_emails") or {})
             if isinstance(saved_apps, list):
                 for s in saved_apps:
                     slug = extract_app_slug(s)
                     if slug:
-                        accounts[slug] = {"app": slug, "status": "ACTIVE", "id": f"local_{slug}"}
+                        entry = {"app": slug, "status": "ACTIVE", "id": f"local_{slug}"}
+                        if slug in saved_emails:
+                            entry["email"] = saved_emails[slug]
+                        accounts[slug] = entry
         except Exception:
             pass
 
@@ -438,6 +443,23 @@ async def _get_connected_apps(ctx, api_key: str) -> dict[str, dict[str, Any]]:
             except Exception:
                 continue
 
+    # 6. Apply saved emails fallback for any account still missing an email
+    for s_slug, s_em in saved_emails.items():
+        if s_slug in accounts and not accounts[s_slug].get("email") and s_em:
+            accounts[s_slug]["email"] = s_em
+
+    # 7. Persist newly discovered Gmail email into settings
+    gmail_discovered = accounts.get("gmail", {}).get("email")
+    if gmail_discovered and "@" in str(gmail_discovered) and settings is not None:
+        try:
+            c_cfg = settings.load()
+            c_emails = dict(c_cfg.get("composio_account_emails") or {})
+            if c_emails.get("gmail") != str(gmail_discovered):
+                c_emails["gmail"] = str(gmail_discovered)
+                settings.update({"composio_account_emails": c_emails})
+        except Exception:
+            pass
+
     return accounts
 
 
@@ -517,6 +539,17 @@ def register(ctx) -> None:
             if res.get("success"):
                 pdata = res.get("data", {})
                 email = pdata.get("emailAddress") or pdata.get("email") or gmail_info.get("email") or "подключен"
+                if "@" in str(email):
+                    settings_svc = ctx.services.get("settings")
+                    if settings_svc is not None:
+                        try:
+                            c_cfg = settings_svc.load()
+                            c_emails = dict(c_cfg.get("composio_account_emails") or {})
+                            if c_emails.get("gmail") != str(email):
+                                c_emails["gmail"] = str(email)
+                                settings_svc.update({"composio_account_emails": c_emails})
+                        except Exception:
+                            pass
                 total_msgs = pdata.get("messagesTotal", gmail_info.get("messagesTotal", "N/A"))
                 total_threads = pdata.get("threadsTotal", gmail_info.get("threadsTotal", "N/A"))
                 return (

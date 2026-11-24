@@ -397,9 +397,14 @@ export const api = {
   getSystemStatus: () => requestJson<SystemStatus>("/api/system/status"),
   getSettings: () => requestJson<Record<string, unknown>>("/api/settings"),
   getComposioStatus: () =>
-    requestJson<{ configured: boolean; valid?: boolean; masked_key?: string; accounts: Array<{ app: string; status: string; id: string }>; message: string }>(
-      "/api/hub/composio/status"
-    ),
+    requestJson<{
+      configured: boolean;
+      valid?: boolean;
+      masked_key?: string;
+      accounts: Array<{ app: string; status: string; id: string; email?: string; alias?: string }>;
+      composio_account_emails?: Record<string, string>;
+      message: string;
+    }>("/api/hub/composio/status"),
   resetComposioKey: () =>
     requestJson<{ ok: boolean; message: string }>("/api/hub/composio/reset", {
       method: "POST",
@@ -414,6 +419,14 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ app, connected }),
     }),
+  setComposioAccountEmail: (app: string, email: string) =>
+    requestJson<{ ok: boolean; app: string; email: string; composio_account_emails: Record<string, string> }>(
+      "/api/hub/composio/email",
+      {
+        method: "POST",
+        body: JSON.stringify({ app, email }),
+      }
+    ),
   getAgensiStatus: () =>
     requestJson<{ connected: boolean; authenticated: boolean; tools_count: number; url?: string; error?: string }>(
       "/api/hub/agensi/status"

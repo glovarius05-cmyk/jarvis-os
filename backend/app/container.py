@@ -172,6 +172,7 @@ class AppContainer:
             skills=skill_store,
             core_memory=core_memory,
             characters=characters,
+            settings=settings_store,
         )
         engine_router = EngineRouter(settings_store, vaults=vault_manager, hub=hub)
         hub.set_engine_router(engine_router)
