@@ -354,6 +354,30 @@ def extract_email_from_obj(it: Any) -> str:
     return ""
 
 
+def parse_composio_json(raw: str) -> dict[str, Any]:
+    """Robustly parse Composio response, stripping markdown code blocks if present."""
+    if not raw or not isinstance(raw, str):
+        return {}
+    cleaned = raw.strip()
+    import re
+    if "```" in cleaned:
+        m = re.search(r'```(?:json)?\s*(\{.*\}|\[.*\])\s*```', cleaned, re.DOTALL)
+        if m:
+            cleaned = m.group(1).strip()
+    try:
+        res = json.loads(cleaned)
+        return res if isinstance(res, dict) else {}
+    except Exception:
+        m = re.search(r'(\{.*\})', cleaned, re.DOTALL)
+        if m:
+            try:
+                res = json.loads(m.group(1))
+                return res if isinstance(res, dict) else {}
+            except Exception:
+                pass
+    return {}
+
+
 def _persist_found_email(container: AppContainer, app_slug: str, email: str) -> None:
     """Helper to store discovered account email in settings."""
     clean = (email or "").strip()
@@ -553,10 +577,7 @@ async def get_composio_status(container: AppContainer = Depends(get_container)) 
 
                         res_obj = {}
                         if raw_json_str:
-                            try:
-                                res_obj = json.loads(raw_json_str)
-                            except Exception:
-                                pass
+                            res_obj = parse_composio_json(raw_json_str)
                         elif isinstance(call_payload, dict):
                             res_obj = call_payload
 
@@ -624,67 +645,67 @@ async def get_composio_status(container: AppContainer = Depends(get_container)) 
         except Exception:
             pass
 
-    # 2. REST API queries to backend.composio.dev (Platform mode)
-    rest_urls = [
-        f"{COMPOSIO_BASE}/connected_accounts?account_type=ALL",
-        f"{COMPOSIO_BASE}/connected_accounts",
-        f"{COMPOSIO_BASE}/connected_accounts?user_ids=default",
-        "https://backend.composio.dev/api/v3/connected_accounts?account_type=ALL",
-        "https://backend.composio.dev/api/v3/connected_accounts",
-        "https://backend.composio.dev/api/v3/connected_accounts?user_ids=default",
-    ]
-    rest_headers = [
-        {"x-api-key": key, "Accept": "application/json"},
-        {"x-consumer-api-key": key, "Accept": "application/json"},
-        {"x-org-api-key": key, "Accept": "application/json"},
-        {"x-user-api-key": key, "Accept": "application/json"},
-        {"Authorization": f"Bearer {key}", "Accept": "application/json"},
-    ]
+    # 2. REST API queries to backend.composio.dev (only if MCP did not already discover active accounts)
+    if not (mcp_succeeded and accounts_by_app):
+        rest_urls = [
+            f"{COMPOSIO_BASE}/connected_accounts?account_type=ALL",
+            "https://backend.composio.dev/api/v3.1/connected_accounts",
+        ]
+        if key.startswith("ck"):
+            rest_headers = [{"x-consumer-api-key": key, "Accept": "application/json"}]
+        else:
+            rest_headers = [
+                {"x-api-key": key, "Accept": "application/json"},
+                {"Authorization": f"Bearer {key}", "Accept": "application/json"},
+            ]
 
-    for r_url in rest_urls:
-        for r_hdrs in rest_headers:
-            try:
-                async with httpx.AsyncClient(timeout=8.0) as client:
-                    r_res = await client.get(r_url, headers=r_hdrs)
-                    last_status = r_res.status_code
-                    last_text = r_res.text
-                    if r_res.status_code == 200:
-                        rest_succeeded = True
-                        r_data = r_res.json()
-                        raw_items = []
-                        if isinstance(r_data, list):
-                            raw_items = r_data
-                        elif isinstance(r_data, dict):
-                            raw_items = (
-                                r_data.get("items")
-                                or r_data.get("connected_accounts")
-                                or r_data.get("data")
-                                or r_data.get("results")
-                                or []
-                            )
-                        for item in raw_items:
-                            if not isinstance(item, dict):
-                                continue
-                            app_slug = extract_app_slug(item)
-                            if not app_slug:
-                                continue
-                            raw_st = str(item.get("status") or "ACTIVE").upper()
-                            st = "ACTIVE" if raw_st in ("ACTIVE", "CONNECTED", "READY", "ENABLED", "INITIATED", "INITIALIZED") else raw_st
-                            raw_id = str(item.get("id") or item.get("nanoid") or item.get("accountId") or "")
-                            email = extract_email_from_obj(item)
-                            alias = str(item.get("alias") or item.get("account_identifier") or "")
-                            existing = accounts_by_app.get(app_slug, {})
-                            acc_id = raw_id or existing.get("id") or app_slug
-                            acc_entry: dict[str, Any] = {"app": app_slug, "status": st, "id": acc_id}
-                            if email or existing.get("email"):
-                                acc_entry["email"] = email or existing.get("email")
-                            if alias or existing.get("alias"):
-                                acc_entry["alias"] = alias or existing.get("alias")
-                            accounts_by_app[app_slug] = acc_entry
-                            if raw_id and raw_id.startswith("ca_"):
-                                _persist_found_account_id(container, app_slug, raw_id)
-            except Exception:
-                continue
+        for r_url in rest_urls:
+            for r_hdrs in rest_headers:
+                try:
+                    async with httpx.AsyncClient(timeout=4.0) as client:
+                        r_res = await client.get(r_url, headers=r_hdrs)
+                        last_status = r_res.status_code
+                        last_text = r_res.text
+                        if r_res.status_code == 200:
+                            rest_succeeded = True
+                            r_data = r_res.json()
+                            raw_items = []
+                            if isinstance(r_data, list):
+                                raw_items = r_data
+                            elif isinstance(r_data, dict):
+                                raw_items = (
+                                    r_data.get("items")
+                                    or r_data.get("connected_accounts")
+                                    or r_data.get("data")
+                                    or r_data.get("results")
+                                    or []
+                                )
+                            for item in raw_items:
+                                if not isinstance(item, dict):
+                                    continue
+                                app_slug = extract_app_slug(item)
+                                if not app_slug:
+                                    continue
+                                raw_st = str(item.get("status") or "ACTIVE").upper()
+                                st = "ACTIVE" if raw_st in ("ACTIVE", "CONNECTED", "READY", "ENABLED", "INITIATED", "INITIALIZED") else raw_st
+                                raw_id = str(item.get("id") or item.get("nanoid") or item.get("accountId") or "")
+                                email = extract_email_from_obj(item)
+                                alias = str(item.get("alias") or item.get("account_identifier") or "")
+                                existing = accounts_by_app.get(app_slug, {})
+                                acc_id = raw_id or existing.get("id") or app_slug
+                                acc_entry: dict[str, Any] = {"app": app_slug, "status": st, "id": acc_id}
+                                if email or existing.get("email"):
+                                    acc_entry["email"] = email or existing.get("email")
+                                if alias or existing.get("alias"):
+                                    acc_entry["alias"] = alias or existing.get("alias")
+                                accounts_by_app[app_slug] = acc_entry
+                                if raw_id and raw_id.startswith("ca_"):
+                                    _persist_found_account_id(container, app_slug, raw_id)
+                            break
+                except Exception:
+                    continue
+            if rest_succeeded:
+                break
 
     # 3. Merge locally persisted / user confirmed connections, saved emails & account IDs
     saved_emails: dict[str, str] = {}

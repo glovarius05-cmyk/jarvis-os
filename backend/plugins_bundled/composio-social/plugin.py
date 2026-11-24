@@ -17,7 +17,7 @@ from typing import Any
 
 import httpx
 
-from app.api.routes.hub import extract_app_slug
+from app.api.routes.hub import extract_app_slug, parse_composio_json
 
 COMPOSIO_API_BASE = "https://backend.composio.dev/api/v3.1"
 
@@ -206,11 +206,13 @@ async def _execute_composio_action(
                             raw_text = data
                         if raw_text:
                             try:
-                                parsed = json.loads(raw_text)
-                                if isinstance(parsed, dict) and (parsed.get("successful") is False or parsed.get("success") is False):
+                                parsed = parse_composio_json(raw_text)
+                                if parsed and isinstance(parsed, dict) and (parsed.get("successful") is False or parsed.get("success") is False):
                                     last_error = str(parsed.get("error") or parsed.get("message") or raw_text[:200])
                                     continue
-                                return {"success": True, "data": parsed, "status_code": 200}
+                                if parsed:
+                                    return {"success": True, "data": parsed, "status_code": 200}
+                                return {"success": True, "data": raw_text, "status_code": 200}
                             except Exception:
                                 return {"success": True, "data": raw_text, "status_code": 200}
                         if data:
@@ -347,10 +349,7 @@ async def _get_connected_apps(ctx, api_key: str) -> dict[str, dict[str, Any]]:
                         raw_text = payload
                     res_obj = {}
                     if raw_text:
-                        try:
-                            res_obj = json.loads(raw_text)
-                        except Exception:
-                            pass
+                        res_obj = parse_composio_json(raw_text)
                     elif isinstance(payload, dict):
                         res_obj = payload
 

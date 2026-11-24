@@ -116,6 +116,8 @@ export function ConnectionsView() {
   const [configTarget, setConfigTarget] = useState<"cursor" | "claude">("cursor");
 
   const refreshComposio = useCallback(async () => {
+    setComposioLoading(true);
+    setComposioMsg("Синхронизация статуса с Composio...");
     try {
       const st = await api.getComposioStatus();
       setComposioConfigured(st.configured);
@@ -123,8 +125,10 @@ export function ConnectionsView() {
       setComposioMaskedKey(st.masked_key || null);
       setComposioAccounts(st.accounts || []);
       setComposioMsg(st.message);
-    } catch {
-      // ignore
+    } catch (err) {
+      setComposioMsg(err instanceof Error ? err.message : "Ошибка синхронизации с Composio");
+    } finally {
+      setComposioLoading(false);
     }
   }, []);
 
