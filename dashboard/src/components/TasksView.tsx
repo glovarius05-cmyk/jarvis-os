@@ -270,9 +270,21 @@ export function TasksView() {
                           return refresh();
                         })
                       }
-                      className="rounded bg-amber-500 px-3 py-1 text-xs font-medium text-zinc-950"
+                      className="rounded bg-amber-500 px-3 py-1 text-xs font-medium text-zinc-950 hover:bg-amber-400"
                     >
                       Answer
+                    </button>
+                    <button
+                      onClick={() =>
+                        void api.answerTask(task.id, "Retry task execution").then(() => {
+                          setAnswers((p) => ({ ...p, [task.id]: "" }));
+                          return refresh();
+                        })
+                      }
+                      className="rounded border border-amber-500/50 bg-amber-500/10 px-3 py-1 text-xs font-medium text-amber-300 hover:bg-amber-500/20"
+                      title="Разблокировать и перезапустить задачу"
+                    >
+                      Повторить
                     </button>
                   </div>
                 )}

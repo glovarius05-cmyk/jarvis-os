@@ -508,7 +508,15 @@ class GeminiApiEngine:
                 stream_success = False
 
                 models_to_try = [model_name]
-                for candidate in ("gemini-3-flash-preview", "gemini-3.5-flash-lite", "gemini-flash-lite-latest"):
+                for candidate in (
+                    "gemini-3.8-flash",
+                    "gemini-2.5-flash",
+                    "gemini-2.0-flash",
+                    "gemini-3.5-flash-lite",
+                    "gemini-1.5-flash",
+                    "gemini-3-flash-preview",
+                    "gemini-flash-lite-latest",
+                ):
                     if candidate not in models_to_try:
                         models_to_try.append(candidate)
 
@@ -533,13 +541,14 @@ class GeminiApiEngine:
                                         break
                                 elif resp.status_code in {503, 429, 502, 504}:
                                     if attempt < model_attempts - 1:
+                                        wait_s = 2.0 * (attempt + 1)
                                         yield EngineEvent(
                                             type="status",
-                                            content=f"Google Gemini высокая нагрузка на {cur_model} (HTTP {resp.status_code}), повтор...",
+                                            content=f"Google Gemini высокая нагрузка на {cur_model} (HTTP {resp.status_code}), повтор через {wait_s:.0f}с...",
                                             provider="gemini-api",
                                             model=cur_model,
                                         )
-                                        await asyncio.sleep(1.0 * (attempt + 1))
+                                        await asyncio.sleep(wait_s)
                                         continue
                                     elif cur_model != models_to_try[-1]:
                                         next_m = models_to_try[models_to_try.index(cur_model) + 1]
