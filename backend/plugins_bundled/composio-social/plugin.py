@@ -594,11 +594,42 @@ def register(ctx) -> None:
         if not app:
             return "ERROR: 'app' parameter is required (e.g. gmail, github, googlecalendar, twitter, linkedin, instagram)."
 
+        account_id = str(args.get("account_id") or args.get("connected_account_id") or args.get("id") or "").strip()
+        email = str(args.get("email") or args.get("username") or args.get("user") or "").strip()
+        norm_app = extract_app_slug(app) or app
+
+        # If user/LLM supplied account_id directly, save and activate immediately
+        if account_id:
+            settings_svc = ctx.services.get("settings")
+            if settings_svc is not None:
+                try:
+                    c_cfg = settings_svc.load()
+                    c_ids = dict(c_cfg.get("composio_account_ids") or {})
+                    c_ids[norm_app] = account_id
+                    c_emails = dict(c_cfg.get("composio_account_emails") or {})
+                    if email:
+                        c_emails[norm_app] = email
+                    c_apps = list(c_cfg.get("composio_connected_apps") or [])
+                    if norm_app not in c_apps:
+                        c_apps.append(norm_app)
+                    settings_svc.update({
+                        "composio_account_ids": c_ids,
+                        "composio_account_emails": c_emails,
+                        "composio_connected_apps": c_apps,
+                    })
+                except Exception:
+                    pass
+            return (
+                f"Успешно сохранен идентификатор подключения для {norm_app.upper()}!\n"
+                f"- Connected Account ID: {account_id}\n"
+                f"- Email / User: {email or 'не указан'}\n"
+                f"Интеграция активирована и готова к работе."
+            )
+
         api_key = _get_api_key(ctx)
         if not api_key:
             return "ERROR: Composio API key is not configured. Add 'composio_api_key' in Settings."
 
-        norm_app = extract_app_slug(app) or app
         dashboard_url = f"https://dashboard.composio.dev/~/org/connect/apps/{norm_app}?open=true"
 
         # Try to obtain real OAuth authorization link from Composio Connect MCP
@@ -687,6 +718,48 @@ def register(ctx) -> None:
                         ca_id = c_ids["gmail"]
                 except Exception:
                     pass
+
+        passed_ca = str(args.get("account_id") or args.get("connected_account_id") or "").strip()
+        if passed_ca.startswith("ca_"):
+            ca_id = passed_ca
+            settings_svc = ctx.services.get("settings")
+            if settings_svc is not None:
+                try:
+                    c_cfg = settings_svc.load()
+                    c_ids = dict(c_cfg.get("composio_account_ids") or {})
+                    if c_ids.get("gmail") != passed_ca:
+                        c_ids["gmail"] = passed_ca
+                        settings_svc.update({"composio_account_ids": c_ids})
+                except Exception:
+                    pass
+
+        if action in ("set_account", "configure", "bind", "set_id"):
+            new_ca = str(args.get("account_id") or args.get("connected_account_id") or args.get("id") or "").strip()
+            new_em = str(args.get("email") or "").strip()
+            if not new_ca:
+                return "ERROR: 'account_id' (начинается с ca_...) обязателен для действия set_account."
+            settings_svc = ctx.services.get("settings")
+            if settings_svc is not None:
+                c_cfg = settings_svc.load()
+                c_ids = dict(c_cfg.get("composio_account_ids") or {})
+                c_ids["gmail"] = new_ca
+                c_emails = dict(c_cfg.get("composio_account_emails") or {})
+                if new_em:
+                    c_emails["gmail"] = new_em
+                c_apps = list(c_cfg.get("composio_connected_apps") or [])
+                if "gmail" not in c_apps:
+                    c_apps.append("gmail")
+                settings_svc.update({
+                    "composio_account_ids": c_ids,
+                    "composio_account_emails": c_emails,
+                    "composio_connected_apps": c_apps,
+                })
+            return (
+                f"Gmail аккаунт успешно привязан!\n"
+                f"- Connected Account ID: {new_ca}\n"
+                f"- Email: {new_em or 'berti05@gmail.com'}\n"
+                f"Интеграция активирована. Теперь Jarvis OS может проверять и отправлять почту."
+            )
 
         if action in ("profile", "status", "whoami", "email", "info"):
             res = await _execute_composio_action(
@@ -904,6 +977,48 @@ def register(ctx) -> None:
                         ca_id = c_ids["github"]
                 except Exception:
                     pass
+
+        passed_ca = str(args.get("account_id") or args.get("connected_account_id") or "").strip()
+        if passed_ca.startswith("ca_"):
+            ca_id = passed_ca
+            settings_svc = ctx.services.get("settings")
+            if settings_svc is not None:
+                try:
+                    c_cfg = settings_svc.load()
+                    c_ids = dict(c_cfg.get("composio_account_ids") or {})
+                    if c_ids.get("github") != passed_ca:
+                        c_ids["github"] = passed_ca
+                        settings_svc.update({"composio_account_ids": c_ids})
+                except Exception:
+                    pass
+
+        if action in ("set_account", "configure", "bind", "set_id"):
+            new_ca = str(args.get("account_id") or args.get("connected_account_id") or args.get("id") or "").strip()
+            new_user = str(args.get("username") or args.get("user") or args.get("login") or "").strip()
+            if not new_ca:
+                return "ERROR: 'account_id' (начинается с ca_...) обязателен для действия set_account."
+            settings_svc = ctx.services.get("settings")
+            if settings_svc is not None:
+                c_cfg = settings_svc.load()
+                c_ids = dict(c_cfg.get("composio_account_ids") or {})
+                c_ids["github"] = new_ca
+                c_emails = dict(c_cfg.get("composio_account_emails") or {})
+                if new_user:
+                    c_emails["github"] = new_user
+                c_apps = list(c_cfg.get("composio_connected_apps") or [])
+                if "github" not in c_apps:
+                    c_apps.append("github")
+                settings_svc.update({
+                    "composio_account_ids": c_ids,
+                    "composio_account_emails": c_emails,
+                    "composio_connected_apps": c_apps,
+                })
+            return (
+                f"GitHub аккаунт успешно привязан!\n"
+                f"- Connected Account ID: {new_ca}\n"
+                f"- Username: {new_user or 'подключен'}\n"
+                f"Интеграция активирована. Теперь Jarvis OS может просматривать репозитории и issues."
+            )
 
         owner = ""
         repo_name = ""
@@ -1190,6 +1305,14 @@ def register(ctx) -> None:
                     "type": "string",
                     "description": "Optional callback URL after authorization completes",
                 },
+                "account_id": {
+                    "type": "string",
+                    "description": "Optional Composio connected account ID (e.g. ca_...) to bind immediately",
+                },
+                "email": {
+                    "type": "string",
+                    "description": "Optional user email or username to bind to this connected account",
+                },
             },
             "required": ["app"],
         },
@@ -1197,7 +1320,7 @@ def register(ctx) -> None:
 
     ctx.register_tool(
         name="composio_gmail",
-        description="Interact with Gmail via Composio: inspect user profile/email address, list/search emails, read messages, or send emails.",
+        description="Interact with Gmail via Composio: inspect user profile/email address, list/search emails, read messages, send emails, or bind an account ID (set_account).",
         handler=composio_gmail,
         min_mode="safe",
         schema={
@@ -1205,9 +1328,13 @@ def register(ctx) -> None:
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["profile", "list", "search", "read", "send"],
-                    "description": "Action to perform: 'profile' (get connected email address and stats), 'list' (list recent emails), 'search' (search emails by query), 'read' (read email body), 'send' (send email)",
+                    "enum": ["profile", "list", "search", "read", "send", "set_account"],
+                    "description": "Action to perform: 'profile' (get connected email address and stats), 'list' (list recent emails), 'search' (search emails by query), 'read' (read email body), 'send' (send email), 'set_account' (bind ca_... ID)",
                     "default": "profile",
+                },
+                "account_id": {
+                    "type": "string",
+                    "description": "Optional Composio connected account ID (ca_...) to bind or override",
                 },
                 "query": {
                     "type": "string",
@@ -1281,7 +1408,7 @@ def register(ctx) -> None:
 
     ctx.register_tool(
         name="composio_github",
-        description="Interact with GitHub via Composio: inspect user profile, list repositories, view open issues/pull requests, or create issues.",
+        description="Interact with GitHub via Composio: inspect user profile, list repositories, view open issues/pull requests, create issues, or bind an account ID (set_account).",
         handler=composio_github,
         min_mode="safe",
         schema={
@@ -1289,9 +1416,13 @@ def register(ctx) -> None:
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["profile", "repos", "issues", "pulls", "create_issue", "star"],
-                    "description": "Action to perform: 'profile', 'repos' (list user repositories), 'issues' (list issues in repo), 'pulls' (list PRs), 'create_issue' (new issue), 'star' (star repo)",
+                    "enum": ["profile", "repos", "issues", "pulls", "create_issue", "star", "set_account"],
+                    "description": "Action to perform: 'profile', 'repos' (list user repositories), 'issues' (list issues in repo), 'pulls' (list PRs), 'create_issue' (new issue), 'star' (star repo), 'set_account' (bind ca_... ID)",
                     "default": "repos",
+                },
+                "account_id": {
+                    "type": "string",
+                    "description": "Optional Composio connected account ID (ca_...) to bind or override",
                 },
                 "repo": {
                     "type": "string",

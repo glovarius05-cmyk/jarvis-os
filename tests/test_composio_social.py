@@ -427,6 +427,26 @@ async def test_composio_github_tool_execution(tmp_path: Path, monkeypatch: pytes
     res_repos = await hub.call_tool(name="composio_github", args={"action": "repos"}, brain="Brain Default", run_mode="safe")
     assert "repo1" in res_repos
 
+    # 3. Test binding account ID via composio_connect and composio_gmail
+    bind_out = await hub.call_tool(
+        name="composio_connect",
+        args={"app": "gmail", "account_id": "ca_test_bind_123", "email": "testowner@gmail.com"},
+        brain="Brain Default",
+        run_mode="safe",
+    )
+    assert "ca_test_bind_123" in bind_out
+    assert ctr.settings.load()["composio_account_ids"]["gmail"] == "ca_test_bind_123"
+
+    gmail_set = await hub.call_tool(
+        name="composio_gmail",
+        args={"action": "set_account", "account_id": "ca_test_gmail_999", "email": "mytest@gmail.com"},
+        brain="Brain Default",
+        run_mode="safe",
+    )
+    assert "ca_test_gmail_999" in gmail_set
+    assert ctr.settings.load()["composio_account_ids"]["gmail"] == "ca_test_gmail_999"
+    assert ctr.settings.load()["composio_account_emails"]["gmail"] == "mytest@gmail.com"
+
 
 
 
