@@ -331,7 +331,21 @@ def test_composio_email_api_and_prompt_injection(tmp_path: Path) -> None:
         model="gemini-3.5-flash",
     )
     assert "# === CONNECTED USER ACCOUNTS & INTEGRATIONS ===" in prompt
-    assert "GMAIL: connected (user email / identifier: `testowner@gmail.com`)" in prompt
+    assert "GMAIL: connected (email: `testowner@gmail.com`)" in prompt
+
+    # 5. Set account ID as well
+    res_id = client.post("/api/hub/composio/email", json={"app": "gmail", "email": "testowner@gmail.com", "account_id": "ca_test_999"})
+    assert res_id.status_code == 200
+    assert res_id.json()["account_id"] == "ca_test_999"
+    assert ctr.settings.load()["composio_account_ids"]["gmail"] == "ca_test_999"
+
+    prompt2 = ctr.prompt_builder.build(
+        brain="Brain Default",
+        provider="google",
+        model="gemini-3.5-flash",
+    )
+    assert "account_id: `ca_test_999`" in prompt2
+    assert "Never ask the user for connected_account_id" in prompt2
 
 
 

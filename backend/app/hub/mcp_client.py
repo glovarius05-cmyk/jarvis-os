@@ -246,6 +246,10 @@ class MCPClientPool:
         self._http_transport = http_transport
         self._cache_ttl = cache_ttl_s
         self._cache: dict[str, tuple[float, list[ToolDefinition]]] = {}
+        self._settings_store: Any = None
+
+    def set_settings_store(self, store: Any) -> None:
+        self._settings_store = store
 
     def invalidate(self, conn_id: str | None = None) -> None:
         if conn_id is None:
@@ -355,7 +359,55 @@ class MCPClientPool:
 
     async def _http_call_tool(self, conn: MCPConnection, tool_name: str, args: dict[str, Any]) -> str:
         try:
-            result = await self._http_rpc(conn, "tools/call", {"name": tool_name, "arguments": args})
+            call_args = dict(args)
+            if conn.id == "composio":
+                upper_name = tool_name.upper()
+                target_slug = ""
+                for slug in (
+                    "gmail",
+                    "googlecalendar",
+                    "googlesheets",
+                    "github",
+                    "notion",
+                    "twitter",
+                    "linkedin",
+                    "instagram",
+                    "facebook",
+                    "youtube",
+                    "reddit",
+                ):
+                    if slug.upper() in upper_name or (slug == "twitter" and "TWITTER" in upper_name):
+                        target_slug = slug
+                        break
+                if not target_slug and "action_name" in call_args:
+                    act = str(call_args["action_name"]).upper()
+                    for slug in ("gmail", "googlecalendar", "googlesheets", "github", "notion", "twitter", "linkedin"):
+                        if slug.upper() in act:
+                            target_slug = slug
+                            break
+
+                ca_id = ""
+                if self._settings_store is not None:
+                    try:
+                        cfg = self._settings_store.load()
+                        saved_ids = dict(cfg.get("composio_account_ids") or {})
+                        if target_slug and target_slug in saved_ids:
+                            ca_id = saved_ids[target_slug]
+                        elif len(saved_ids) == 1 and not target_slug:
+                            ca_id = list(saved_ids.values())[0]
+                    except Exception:
+                        pass
+
+                if ca_id and str(ca_id).startswith("ca_"):
+                    if "connected_account_id" not in call_args or not call_args.get("connected_account_id"):
+                        call_args["connected_account_id"] = ca_id
+                    if "arguments" in call_args and isinstance(call_args["arguments"], dict):
+                        if not call_args["arguments"].get("connected_account_id"):
+                            call_args["arguments"]["connected_account_id"] = ca_id
+
+                call_args.setdefault("user_id", "default")
+
+            result = await self._http_rpc(conn, "tools/call", {"name": tool_name, "arguments": call_args})
             return _extract_mcp_result_text(result)
         except Exception as exc:  # noqa: BLE001
             return f"ERROR: {exc}"

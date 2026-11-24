@@ -30,6 +30,7 @@ ALLOWED_TOP_KEYS = {
     "composio_api_key",
     "composio_connected_apps",
     "composio_account_emails",
+    "composio_account_ids",
     "perplexity_api_key",
     "deepseek_api_key",
     "moonshot_api_key",

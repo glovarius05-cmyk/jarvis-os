@@ -106,6 +106,8 @@ class MCPHubGateway:
     def set_approval_manager(self, manager: Any, settings: Any = None) -> None:
         self._approval_manager = manager
         self._settings_store = settings
+        if settings is not None:
+            self.mcp_pool.set_settings_store(settings)
 
     def hub_url(self) -> str:
         return f"http://127.0.0.1:{self._port}/hub/mcp"

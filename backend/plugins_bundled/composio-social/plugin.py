@@ -97,11 +97,18 @@ async def _execute_composio_action(
     real_ca_id = str(connected_account_id).strip() if (connected_account_id and str(connected_account_id).startswith("ca_")) else None
     effective_user = str(user_id or "default").strip()
 
-    headers_variants = [
-        {"x-api-key": api_key, "Content-Type": "application/json", "Accept": "application/json"},
-        {"x-consumer-api-key": api_key, "Content-Type": "application/json", "Accept": "application/json"},
-        {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "Accept": "application/json"},
-    ]
+    if api_key.startswith("ck"):
+        headers_variants = [
+            {"x-consumer-api-key": api_key, "Content-Type": "application/json", "Accept": "application/json"},
+            {"x-api-key": api_key, "Content-Type": "application/json", "Accept": "application/json"},
+            {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "Accept": "application/json"},
+        ]
+    else:
+        headers_variants = [
+            {"x-api-key": api_key, "Content-Type": "application/json", "Accept": "application/json"},
+            {"x-consumer-api-key": api_key, "Content-Type": "application/json", "Accept": "application/json"},
+            {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "Accept": "application/json"},
+        ]
 
     payloads: list[dict[str, Any]] = []
     if real_ca_id:
@@ -225,16 +232,18 @@ async def _get_connected_apps(ctx, api_key: str) -> dict[str, dict[str, Any]]:
     # 1. Check locally confirmed / persisted connections in settings
     settings = ctx.services.get("settings")
     saved_emails: dict[str, str] = {}
+    saved_ids: dict[str, str] = {}
     if settings is not None:
         try:
             cfg = settings.load()
             saved_apps = cfg.get("composio_connected_apps") or []
             saved_emails = dict(cfg.get("composio_account_emails") or {})
+            saved_ids = dict(cfg.get("composio_account_ids") or {})
             if isinstance(saved_apps, list):
                 for s in saved_apps:
                     slug = extract_app_slug(s)
                     if slug:
-                        entry = {"app": slug, "status": "ACTIVE", "id": f"local_{slug}"}
+                        entry = {"app": slug, "status": "ACTIVE", "id": saved_ids.get(slug) or f"local_{slug}"}
                         if slug in saved_emails:
                             entry["email"] = saved_emails[slug]
                         accounts[slug] = entry
@@ -250,11 +259,18 @@ async def _get_connected_apps(ctx, api_key: str) -> dict[str, dict[str, Any]]:
         "https://backend.composio.dev/api/v3/connected_accounts",
         "https://backend.composio.dev/api/v3/connected_accounts?user_ids=default",
     ]
-    headers_variants = [
-        {"x-api-key": api_key, "Accept": "application/json"},
-        {"x-consumer-api-key": api_key, "Accept": "application/json"},
-        {"Authorization": f"Bearer {api_key}", "Accept": "application/json"},
-    ]
+    if api_key.startswith("ck"):
+        headers_variants = [
+            {"x-consumer-api-key": api_key, "Accept": "application/json"},
+            {"x-api-key": api_key, "Accept": "application/json"},
+            {"Authorization": f"Bearer {api_key}", "Accept": "application/json"},
+        ]
+    else:
+        headers_variants = [
+            {"x-api-key": api_key, "Accept": "application/json"},
+            {"x-consumer-api-key": api_key, "Accept": "application/json"},
+            {"Authorization": f"Bearer {api_key}", "Accept": "application/json"},
+        ]
     for url in rest_urls:
         for hdrs in headers_variants:
             try:
@@ -369,6 +385,15 @@ async def _get_connected_apps(ctx, api_key: str) -> dict[str, dict[str, Any]]:
                                         c_id = a.get("id") or a.get("nanoid")
                                         if c_id and str(c_id).startswith("ca_"):
                                             ca_id = str(c_id)
+                                            if settings is not None:
+                                                try:
+                                                    c_cfg = settings.load()
+                                                    c_ids = dict(c_cfg.get("composio_account_ids") or {})
+                                                    if c_ids.get(norm_slug) != ca_id:
+                                                        c_ids[norm_slug] = ca_id
+                                                        settings.update({"composio_account_ids": c_ids})
+                                                except Exception:
+                                                    pass
                                         e = _extract_email_from_account(a)
                                         if e:
                                             email = e
@@ -443,10 +468,13 @@ async def _get_connected_apps(ctx, api_key: str) -> dict[str, dict[str, Any]]:
             except Exception:
                 continue
 
-    # 6. Apply saved emails fallback for any account still missing an email
+    # 6. Apply saved emails and account IDs fallback for any account
     for s_slug, s_em in saved_emails.items():
         if s_slug in accounts and not accounts[s_slug].get("email") and s_em:
             accounts[s_slug]["email"] = s_em
+    for s_slug, s_id in saved_ids.items():
+        if s_slug in accounts and not str(accounts[s_slug].get("id") or "").startswith("ca_") and s_id:
+            accounts[s_slug]["id"] = s_id
 
     # 7. Persist newly discovered Gmail email into settings
     gmail_discovered = accounts.get("gmail", {}).get("email")
@@ -519,6 +547,16 @@ def register(ctx) -> None:
         gmail_info = accounts.get("gmail", {})
         ca_id = gmail_info.get("id")
         user_id = gmail_info.get("user_id")
+
+        if not ca_id or not str(ca_id).startswith("ca_"):
+            settings_svc = ctx.services.get("settings")
+            if settings_svc is not None:
+                try:
+                    c_ids = settings_svc.load().get("composio_account_ids") or {}
+                    if c_ids.get("gmail"):
+                        ca_id = c_ids["gmail"]
+                except Exception:
+                    pass
 
         if action in ("profile", "status", "whoami", "email", "info"):
             res = await _execute_composio_action(

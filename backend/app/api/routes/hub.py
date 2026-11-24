@@ -369,9 +369,25 @@ def _persist_found_email(container: AppContainer, app_slug: str, email: str) -> 
         pass
 
 
+def _persist_found_account_id(container: AppContainer, app_slug: str, account_id: str) -> None:
+    """Helper to store discovered Composio connected account ID (ca_...) in settings."""
+    clean = (account_id or "").strip()
+    if not clean or not clean.startswith("ca_"):
+        return
+    try:
+        cfg = container.settings.load()
+        cur_ids = dict(cfg.get("composio_account_ids") or {})
+        if cur_ids.get(app_slug) != clean:
+            cur_ids[app_slug] = clean
+            container.settings.update({"composio_account_ids": cur_ids})
+    except Exception:
+        pass
+
+
 class ComposioSetEmailPayload(BaseModel):
     app: str = Field(..., min_length=1, max_length=50)
     email: str = Field(default="", max_length=200)
+    account_id: str = Field(default="", max_length=200)
 
 
 @router.post("/api/hub/composio/email")
@@ -379,7 +395,7 @@ async def set_composio_account_email(
     payload: ComposioSetEmailPayload,
     container: AppContainer = Depends(get_container),
 ) -> dict[str, Any]:
-    """Persist user-specified email for a connected Composio app."""
+    """Persist user-specified email and/or account ID for a connected Composio app."""
     app_slug = extract_app_slug(payload.app)
     cfg = container.settings.load()
     existing_emails = dict(cfg.get("composio_account_emails") or {})
@@ -388,8 +404,27 @@ async def set_composio_account_email(
         existing_emails[app_slug] = clean_email
     else:
         existing_emails.pop(app_slug, None)
-    container.settings.update({"composio_account_emails": existing_emails})
-    return {"ok": True, "app": app_slug, "email": clean_email, "composio_account_emails": existing_emails}
+
+    existing_ids = dict(cfg.get("composio_account_ids") or {})
+    clean_id = payload.account_id.strip()
+    if clean_id:
+        existing_ids[app_slug] = clean_id
+    elif payload.account_id != "":
+        existing_ids.pop(app_slug, None)
+
+    updates: dict[str, Any] = {"composio_account_emails": existing_emails}
+    if clean_id or payload.account_id != "":
+        updates["composio_account_ids"] = existing_ids
+    container.settings.update(updates)
+
+    return {
+        "ok": True,
+        "app": app_slug,
+        "email": clean_email,
+        "account_id": existing_ids.get(app_slug, ""),
+        "composio_account_emails": existing_emails,
+        "composio_account_ids": existing_ids,
+    }
 
 
 class ComposioConfirmPayload(BaseModel):
@@ -562,6 +597,10 @@ async def get_composio_status(container: AppContainer = Depends(get_container)) 
                                     if email:
                                         entry["email"] = email
                                     accounts_by_app[norm_slug] = entry
+                                    if ca_id and str(ca_id).startswith("ca_"):
+                                        _persist_found_account_id(container, norm_slug, str(ca_id))
+                                    if email:
+                                        _persist_found_email(container, norm_slug, email)
                     break
         except Exception:
             continue
@@ -642,11 +681,14 @@ async def get_composio_status(container: AppContainer = Depends(get_container)) 
                             if alias or existing.get("alias"):
                                 acc_entry["alias"] = alias or existing.get("alias")
                             accounts_by_app[app_slug] = acc_entry
+                            if raw_id and raw_id.startswith("ca_"):
+                                _persist_found_account_id(container, app_slug, raw_id)
             except Exception:
                 continue
 
-    # 3. Merge locally persisted / user confirmed connections & saved emails
+    # 3. Merge locally persisted / user confirmed connections, saved emails & account IDs
     saved_emails: dict[str, str] = {}
+    saved_ids: dict[str, str] = {}
     try:
         cfg = container.settings.load()
         saved_apps = cfg.get("composio_connected_apps") or []
@@ -657,9 +699,12 @@ async def get_composio_status(container: AppContainer = Depends(get_container)) 
                     accounts_by_app[s_slug] = {"app": s_slug, "status": "ACTIVE", "id": f"local_{s_slug}"}
 
         saved_emails = dict(cfg.get("composio_account_emails") or {})
+        saved_ids = dict(cfg.get("composio_account_ids") or {})
         for app_slug, acc_entry in accounts_by_app.items():
             if not acc_entry.get("email") and app_slug in saved_emails:
                 acc_entry["email"] = saved_emails[app_slug]
+            if not str(acc_entry.get("id") or "").startswith("ca_") and app_slug in saved_ids:
+                acc_entry["id"] = saved_ids[app_slug]
     except Exception:
         pass
 
@@ -740,6 +785,7 @@ async def get_composio_status(container: AppContainer = Depends(get_container)) 
             "masked_key": masked_key,
             "accounts": accounts,
             "composio_account_emails": saved_emails,
+            "composio_account_ids": saved_ids,
             "message": msg,
         }
 

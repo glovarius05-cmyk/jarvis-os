@@ -152,18 +152,27 @@ class PromptBuilder:
             try:
                 cfg = self._settings.load()
                 account_emails = cfg.get("composio_account_emails") or {}
+                account_ids = cfg.get("composio_account_ids") or {}
                 connected_apps = cfg.get("composio_connected_apps") or []
-                if account_emails or connected_apps:
+                if account_emails or connected_apps or account_ids:
                     lines = ["# === CONNECTED USER ACCOUNTS & INTEGRATIONS ==="]
                     lines.append("The owner has connected and authorized the following external accounts via Composio:")
-                    all_apps = set(connected_apps) | set(account_emails.keys())
+                    all_apps = set(connected_apps) | set(account_emails.keys()) | set(account_ids.keys())
                     for app in sorted(all_apps):
                         em = account_emails.get(app)
+                        aid = account_ids.get(app)
+                        details = []
+                        if aid:
+                            details.append(f"account_id: `{aid}`")
                         if em:
-                            lines.append(f"- {app.upper()}: connected (user email / identifier: `{em}`)")
-                        else:
-                            lines.append(f"- {app.upper()}: connected")
-                    lines.append("You can directly search emails, read messages, manage calendar, or perform actions for these accounts using available tools.")
+                            details.append(f"email: `{em}`")
+                        details_str = f" ({', '.join(details)})" if details else ""
+                        lines.append(f"- {app.upper()}: connected{details_str}")
+                    lines.append(
+                        "You can directly check emails, list unread messages, manage calendar, or create posts using available tools.\n"
+                        "IMPORTANT: Never ask the user for connected_account_id or say it is missing - Jarvis automatically injects and routes the connected account ID to your tool calls.\n"
+                        "To check Gmail inbox or search emails, call `composio_gmail(action='list', query='in:inbox')` or `mcp__composio__GMAIL_LIST_MESSAGES(query='in:inbox')`."
+                    )
                     sections.append("\n".join(lines))
             except Exception:
                 pass
