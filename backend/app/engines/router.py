@@ -217,6 +217,10 @@ class EngineRouter:
         self._settings = settings
         self._vaults = vaults
         self._hub = hub
+        self._telemetry: Any = None
+
+    def set_telemetry(self, telemetry: Any) -> None:
+        self._telemetry = telemetry
 
     def resolve_target(
         self,
@@ -290,6 +294,42 @@ class EngineRouter:
             return str((cfg.get("local_llama") or {}).get("model") or "llama3.1:8b")
         return PROVIDER_MAP[provider].default_model
 
+    def resolve_fallback_targets(
+        self,
+        primary_provider: str,
+        primary_model: str,
+        cfg: dict[str, Any] | None = None,
+    ) -> list[tuple[str, str]]:
+        """Resolve ordered fallback (provider, model) pairs from model.fallback_chain."""
+        c = cfg or self._settings.load()
+        raw_chain = (c.get("model") or {}).get("fallback_chain") or []
+        targets: list[tuple[str, str]] = []
+        seen: set[tuple[str, str]] = {(primary_provider, primary_model)}
+        for entry in raw_chain:
+            if isinstance(entry, dict):
+                prov = str(entry.get("provider") or "").strip()
+                mdl = str(entry.get("model") or "").strip()
+            else:
+                item = str(entry or "").strip()
+                if not item:
+                    continue
+                if "::" in item:
+                    prov, mdl = item.split("::", 1)
+                    prov, mdl = prov.strip(), mdl.strip()
+                else:
+                    prov, mdl = item, ""
+            if prov not in PROVIDER_MAP:
+                continue
+            spec = PROVIDER_MAP[prov]
+            if spec.kind == "api" and spec.key_field and not str(c.get(spec.key_field) or "").strip():
+                continue
+            resolved_model = mdl or self._default_model_for(prov, c)
+            pair = (prov, resolved_model)
+            if pair not in seen:
+                seen.add(pair)
+                targets.append(pair)
+        return targets
+
     def build_engine(
         self,
         provider: str,
@@ -297,10 +337,35 @@ class EngineRouter:
         brain: str = "",
         run_mode: str = "full",
         model: str = "",
+        allow_fallback: bool = True,
     ) -> EngineProtocol:
         if getattr(self, "_engine_override", None) is not None:
             return self._engine_override
         cfg = self._settings.load()
+
+        if allow_fallback and run_mode not in {"consensus", "debate"}:
+            prim_m = model or self._default_model_for(provider, cfg)
+            fallbacks = self.resolve_fallback_targets(provider, prim_m, cfg)
+            if fallbacks:
+                from app.engines.fallback import FallbackEngine
+
+                primary_engine = self.build_engine(
+                    provider,
+                    brain=brain,
+                    run_mode=run_mode,
+                    model=prim_m,
+                    allow_fallback=False,
+                )
+                return FallbackEngine(
+                    primary_engine=primary_engine,
+                    primary_provider=provider,
+                    primary_model=prim_m,
+                    fallback_targets=fallbacks,
+                    router=self,
+                    brain=brain,
+                    run_mode=run_mode,
+                    telemetry=self._telemetry,
+                )
 
         if run_mode in {"consensus", "debate"}:
             from app.engines.consensus import ConsensusEngine

@@ -304,6 +304,62 @@ def build_builtin_tools(
         header = "\n".join(meta_lines)
         return f"{header}\n\n---\n\n{content}"
 
+    async def jarvis_browser_task_fn(args: dict[str, Any], _brain: str) -> str:
+        from app.hub.browser_agent import run_browser_task
+
+        task = str(args.get("task") or "").strip()
+        url = str(args.get("url") or "").strip()
+        if not task:
+            return "ERROR: task is required."
+        max_steps = max(1, min(int(args.get("max_steps") or 10), 30))
+        headless = bool(args.get("headless", True))
+
+        cfg: dict[str, Any] = {}
+        if router_getter is not None:
+            try:
+                r = router_getter()
+                if hasattr(r, "_settings"):
+                    cfg = r._settings.load()
+            except Exception:
+                cfg = {}
+
+        res = await run_browser_task(
+            task=task,
+            url=url,
+            max_steps=max_steps,
+            headless=headless,
+            settings=cfg,
+        )
+        if not res.get("ok"):
+            return f"ERROR: Browser task failed ({res.get('backend', 'none')}): {res.get('error', 'unknown error')}"
+
+        backend = res.get("backend", "unknown")
+        if backend == "browser_use":
+            return f"[Browser Agent ({backend})]\nTask: {task}\nResult:\n{res.get('result', '')}"
+        elif backend == "playwright":
+            return f"[Browser Agent ({backend})]\nURL: {res.get('url')}\nTitle: {res.get('title')}\nContent:\n{res.get('content', '')}"
+        else:
+            return f"[Browser Agent (HTTP Fallback)]\nURL: {res.get('url')}\nTitle: {res.get('title')}\n{res.get('note', '')}\n\nContent:\n{res.get('content', '')}"
+
+    async def jarvis_browser_navigate_fn(args: dict[str, Any], _brain: str) -> str:
+        from app.hub.browser_agent import run_browser_task
+
+        url = str(args.get("url") or "").strip()
+        if not url:
+            return "ERROR: url is required."
+
+        res = await run_browser_task(
+            task=f"Navigate to {url} and extract page summary",
+            url=url,
+            headless=True,
+        )
+        if not res.get("ok"):
+            return f"ERROR: Browser navigation failed: {res.get('error', 'unknown error')}"
+
+        content = res.get("content") or res.get("result") or ""
+        title = res.get("title", "")
+        return f"[Browser Navigation ({res.get('backend')})]\nURL: {url}\nTitle: {title}\n\n{content}"
+
     async def jarvis_query(args: dict[str, Any], brain: str) -> str:
         ref_id = str(args.get("ref_id") or "").strip()
         if not ref_id:
@@ -1185,6 +1241,39 @@ def build_builtin_tools(
             required_perm=PermLevel.SAFE,
             source="builtin:core_memory",
             handler=jarvis_profile_user,
+            shape_output=False,
+        ),
+        ToolDefinition(
+            name="jarvis_browser_task",
+            description="Autonomous browser agent: execute multi-step interactive web tasks (clicking buttons, filling forms, SPA navigation) using browser-use or Playwright with SSRF guard.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "task": {"type": "string", "description": "Goal or instruction for the browser agent (e.g. 'Search for recent AI papers and extract titles')"},
+                    "url": {"type": "string", "description": "Initial target website URL"},
+                    "max_steps": {"type": "integer", "default": 10, "description": "Maximum interactive browser actions"},
+                    "headless": {"type": "boolean", "default": True, "description": "Whether to run headless"},
+                },
+                "required": ["task"],
+            },
+            required_perm=PermLevel.FULL,
+            source="builtin:browser",
+            handler=jarvis_browser_task_fn,
+            shape_output=False,
+        ),
+        ToolDefinition(
+            name="jarvis_browser_navigate",
+            description="Navigate to a webpage using Playwright / SSRF-safe reader and extract page content and title.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "Target webpage URL to visit"},
+                },
+                "required": ["url"],
+            },
+            required_perm=PermLevel.SAFE,
+            source="builtin:browser",
+            handler=jarvis_browser_navigate_fn,
             shape_output=False,
         ),
     ]

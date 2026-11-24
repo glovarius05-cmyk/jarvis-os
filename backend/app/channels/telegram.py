@@ -151,7 +151,19 @@ class TelegramBotService:
         text = str(msg.get("text") or "").strip()
         voice = msg.get("voice") or msg.get("audio")
 
-        # Handle inbound voice note / audio
+        if not chat_id:
+            return False
+
+        allowed = self._allowed_chat_ids()
+        if chat_id not in allowed:
+            if text or (voice and isinstance(voice, dict) and voice.get("file_id")):
+                await self.send_message(
+                    chat_id,
+                    f"Access denied. Add your chat_id `{chat_id}` to Telegram Allowed Chat IDs in Jarvis OS Channels settings.",
+                )
+            return False
+
+        # Handle inbound voice note / audio (only after owner whitelist check)
         is_voice = False
         if not text and voice and isinstance(voice, dict) and voice.get("file_id"):
             file_id = str(voice["file_id"])
@@ -181,22 +193,12 @@ class TelegramBotService:
             except Exception as exc:  # noqa: BLE001
                 self._last_error = f"Voice transcription failed: {exc}"
 
-        if not chat_id:
-            return False
         if not text:
             if is_voice:
                 await self.send_message(
                     chat_id,
                     "Не удалось распознать голосовое сообщение. Попробуйте сказать чуть четче или ближе к микрофону.",
                 )
-            return False
-
-        allowed = self._allowed_chat_ids()
-        if chat_id not in allowed:
-            await self.send_message(
-                chat_id,
-                f"Access denied. Add your chat_id `{chat_id}` to Telegram Allowed Chat IDs in Jarvis OS Channels settings.",
-            )
             return False
 
         res = await self._shell.handle_message(channel="telegram", peer_id=chat_id, text=text, run_mode="full")

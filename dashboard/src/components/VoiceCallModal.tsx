@@ -87,6 +87,9 @@ function playChime(type: "start" | "ready") {
     const gain = ctx.createGain();
     osc.connect(gain);
     gain.connect(ctx.destination);
+    osc.onended = () => {
+      void ctx.close().catch(() => {});
+    };
 
     if (type === "start") {
       osc.frequency.setValueAtTime(440, ctx.currentTime);
@@ -139,21 +142,37 @@ export function VoiceCallModal({
   const [errorNotice, setErrorNotice] = useState<string | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioUrlRef = useRef<string | null>(null);
   const recRef = useRef<unknown>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const resumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSpokenTurnTextRef = useRef<string>("");
   const prevTurnRef = useRef<LiveTurnState | undefined>(undefined);
   const isSpeakingRef = useRef(false);
   const isListeningRef = useRef(false);
+  const isOpenRef = useRef(isOpen);
+  isOpenRef.current = isOpen;
+  const handsFreeRef = useRef(handsFree);
+  handsFreeRef.current = handsFree;
+  const isMutedRef = useRef(isMuted);
+  isMutedRef.current = isMuted;
 
   // Stop audio playback
   const stopAudio = useCallback(() => {
     isSpeakingRef.current = false;
+    if (resumeTimerRef.current) {
+      clearTimeout(resumeTimerRef.current);
+      resumeTimerRef.current = null;
+    }
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current.currentTime = 0;
       audioRef.current = null;
+    }
+    if (audioUrlRef.current) {
+      URL.revokeObjectURL(audioUrlRef.current);
+      audioUrlRef.current = null;
     }
     if ("speechSynthesis" in window) {
       window.speechSynthesis.cancel();
@@ -200,17 +219,28 @@ export function VoiceCallModal({
             setTimeout(() => resolve({}), 10000)
           );
           const res = await Promise.race([ttsPromise, timeoutPromise]);
-          if (res.audioUrl && isSpeakingRef.current) {
-            const audio = new Audio(res.audioUrl);
+          if (res.audioUrl && isSpeakingRef.current && isOpenRef.current) {
+            const objectUrl = res.audioUrl;
+            audioUrlRef.current = objectUrl;
+            const audio = new Audio(objectUrl);
             audioRef.current = audio;
+
+            const releaseAudio = () => {
+              audioRef.current = null;
+              if (audioUrlRef.current === objectUrl) {
+                URL.revokeObjectURL(objectUrl);
+                audioUrlRef.current = null;
+              }
+            };
 
             audio.onended = () => {
               isSpeakingRef.current = false;
-              audioRef.current = null;
-              if (isOpen && handsFree && !isMuted) {
+              releaseAudio();
+              if (isOpenRef.current && handsFreeRef.current && !isMutedRef.current) {
                 // Short cooldown for echo dissipation before opening mic
-                setTimeout(() => {
-                  if (isOpen && !isSpeakingRef.current) {
+                resumeTimerRef.current = setTimeout(() => {
+                  resumeTimerRef.current = null;
+                  if (isOpenRef.current && handsFreeRef.current && !isMutedRef.current && !isSpeakingRef.current) {
                     void startListening();
                   }
                 }, 350);
@@ -220,6 +250,7 @@ export function VoiceCallModal({
             };
 
             audio.onerror = () => {
+              releaseAudio();
               // Fallback to browser Web Speech API
               fallbackBrowserSpeak(clean);
             };
@@ -228,10 +259,13 @@ export function VoiceCallModal({
               await audio.play();
               return;
             } catch (playErr) {
+              releaseAudio();
               console.warn("Audio play blocked/failed, using speech synthesis fallback:", playErr);
               fallbackBrowserSpeak(clean);
               return;
             }
+          } else if (res.audioUrl) {
+            URL.revokeObjectURL(res.audioUrl);
           }
         }
 
@@ -281,11 +315,12 @@ export function VoiceCallModal({
         utter.rate = 1.02;
       }
 
-      utter.onend = () => {
+      const handleSpeechDone = () => {
         isSpeakingRef.current = false;
-        if (isOpen && handsFree && !isMuted) {
-          setTimeout(() => {
-            if (isOpen && !isSpeakingRef.current) {
+        if (isOpenRef.current && handsFreeRef.current && !isMutedRef.current) {
+          resumeTimerRef.current = setTimeout(() => {
+            resumeTimerRef.current = null;
+            if (isOpenRef.current && handsFreeRef.current && !isMutedRef.current && !isSpeakingRef.current) {
               void startListening();
             }
           }, 350);
@@ -293,18 +328,8 @@ export function VoiceCallModal({
           setStatus("idle");
         }
       };
-      utter.onerror = () => {
-        isSpeakingRef.current = false;
-        if (isOpen && handsFree && !isMuted) {
-          setTimeout(() => {
-            if (isOpen && !isSpeakingRef.current) {
-              void startListening();
-            }
-          }, 350);
-        } else {
-          setStatus("idle");
-        }
-      };
+      utter.onend = handleSpeechDone;
+      utter.onerror = handleSpeechDone;
       window.speechSynthesis.speak(utter);
     } else {
       isSpeakingRef.current = false;

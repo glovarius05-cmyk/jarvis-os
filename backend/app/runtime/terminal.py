@@ -1,9 +1,10 @@
-"""Fenced shell execution with secret redaction for the owner Terminal and Full-mode agents."""
+"""Fenced shell execution with secret redaction and optional Docker sandbox isolation."""
 
 from __future__ import annotations
 
 import asyncio
 import re
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -28,6 +29,48 @@ def redact_secrets(text: str, extra_secrets: Iterable[str] = ()) -> str:
     return out
 
 
+def build_docker_sandbox_argv(
+    command: str,
+    *,
+    cwd: Path,
+    image: str = "python:3.12-slim",
+    network: str = "none",
+    memory_limit: str = "512m",
+    cpus: str = "1.0",
+) -> list[str]:
+    """Build hardened `docker run` argument vector mounting `cwd` at /workspace."""
+    target_cwd = cwd.resolve()
+    net = (network or "none").strip()
+    mem = (memory_limit or "512m").strip()
+    cpu = str(cpus or "1.0").strip()
+    img = (image or "python:3.12-slim").strip()
+    return [
+        "docker",
+        "run",
+        "--rm",
+        "--network",
+        net,
+        "--memory",
+        mem,
+        "--cpus",
+        cpu,
+        "--pids-limit",
+        "128",
+        "--cap-drop",
+        "ALL",
+        "--security-opt",
+        "no-new-privileges",
+        "-v",
+        f"{target_cwd}:/workspace:rw",
+        "-w",
+        "/workspace",
+        img,
+        "sh",
+        "-c",
+        command,
+    ]
+
+
 @dataclass(frozen=True)
 class CommandResult:
     command: str
@@ -36,6 +79,7 @@ class CommandResult:
     stdout: str
     stderr: str
     timed_out: bool = False
+    sandbox: str = "local"
 
     def to_dict(self) -> dict:
         return {
@@ -45,6 +89,7 @@ class CommandResult:
             "stdout": self.stdout,
             "stderr": self.stderr,
             "timed_out": self.timed_out,
+            "sandbox": self.sandbox,
         }
 
 
@@ -55,8 +100,13 @@ async def run_fenced_command(
     timeout_s: float = 30.0,
     max_chars: int = 12_000,
     extra_secrets: Iterable[str] = (),
+    sandbox_mode: str = "local",
+    docker_image: str = "python:3.12-slim",
+    docker_network: str = "none",
+    memory_limit: str = "512m",
+    cpus: str = "1.0",
 ) -> CommandResult:
-    """Execute one shell command inside `cwd` with timeout, size cap, and secret redaction."""
+    """Execute one shell command inside `cwd` (locally or in a Docker sandbox) with secret redaction."""
     clean_cmd = (command or "").strip()
     if not clean_cmd:
         raise ValueError("Command cannot be empty")
@@ -64,12 +114,40 @@ async def run_fenced_command(
     if not target_cwd.is_dir():
         raise ValueError(f"Working directory does not exist: {target_cwd}")
 
-    proc = await asyncio.create_subprocess_shell(
-        clean_cmd,
-        cwd=str(target_cwd),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
+    mode = (sandbox_mode or "local").strip().lower()
+    if mode == "docker":
+        if shutil.which("docker") is None:
+            return CommandResult(
+                command=clean_cmd,
+                cwd=str(target_cwd),
+                exit_code=-1,
+                stdout="",
+                stderr="ERROR: Docker sandbox requested, but 'docker' binary was not found in PATH.",
+                timed_out=False,
+                sandbox="docker",
+            )
+        argv = build_docker_sandbox_argv(
+            clean_cmd,
+            cwd=target_cwd,
+            image=docker_image,
+            network=docker_network,
+            memory_limit=memory_limit,
+            cpus=cpus,
+        )
+        proc = await asyncio.create_subprocess_exec(
+            *argv,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    else:
+        mode = "local"
+        proc = await asyncio.create_subprocess_shell(
+            clean_cmd,
+            cwd=str(target_cwd),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+
     timed_out = False
     try:
         stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=max(1.0, min(timeout_s, 180.0)))
@@ -91,4 +169,5 @@ async def run_fenced_command(
         stdout=stdout_txt,
         stderr=stderr_txt,
         timed_out=timed_out,
+        sandbox=mode,
     )

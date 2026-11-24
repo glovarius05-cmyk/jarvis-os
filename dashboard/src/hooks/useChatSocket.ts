@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { api, type ApprovalItem } from "../api/client";
 
 export interface LiveToolEvent {
   type: "tool_call" | "tool_result";
@@ -23,9 +24,19 @@ export function useChatSocket(handlers: ChatSocketHandlers = {}) {
   const [connected, setConnected] = useState(false);
   const [liveTurns, setLiveTurns] = useState<Record<string, LiveTurnState>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [pendingApprovals, setPendingApprovals] = useState<ApprovalItem[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
   const handlersRef = useRef(handlers);
   handlersRef.current = handlers;
+
+  useEffect(() => {
+    void api
+      .listPendingApprovals()
+      .then((res) => {
+        if (res?.pending) setPendingApprovals(res.pending);
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     let closed = false;
@@ -127,6 +138,22 @@ export function useChatSocket(handlers: ChatSocketHandlers = {}) {
               return copy;
             });
             setErrors((prev) => ({ ...prev, [sid]: String(msg.content ?? "Unknown error") }));
+          } else if (type === "approval_request") {
+            const item: ApprovalItem = {
+              approval_id: String(msg.approval_id ?? ""),
+              session_id: String(msg.session_id ?? ""),
+              brain: String(msg.brain ?? ""),
+              tool_name: String(msg.tool_name ?? ""),
+              args: (msg.args as Record<string, unknown>) ?? {},
+              reason: String(msg.reason ?? ""),
+              channel: String(msg.channel ?? "web"),
+              status: "pending",
+              created_at: Number(msg.created_at ?? Date.now() / 1000),
+            };
+            setPendingApprovals((prev) => [...prev.filter((p) => p.approval_id !== item.approval_id), item]);
+          } else if (type === "approval_resolved") {
+            const aid = String(msg.approval_id ?? "");
+            setPendingApprovals((prev) => prev.filter((p) => p.approval_id !== aid));
           }
         } catch {
           // Ignore malformed frame
@@ -178,5 +205,14 @@ export function useChatSocket(handlers: ChatSocketHandlers = {}) {
     }
   }, []);
 
-  return { connected, liveTurns, errors, sendMessage, stopTurn };
+  const resolveApproval = useCallback(async (approvalId: string, decision: "approve" | "deny") => {
+    try {
+      await api.resolveApproval(approvalId, decision);
+      setPendingApprovals((prev) => prev.filter((p) => p.approval_id !== approvalId));
+    } catch (err) {
+      console.error("Failed to resolve approval:", err);
+    }
+  }, []);
+
+  return { connected, liveTurns, errors, pendingApprovals, resolveApproval, sendMessage, stopTurn };
 }

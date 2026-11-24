@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
@@ -259,8 +260,7 @@ def get_brain_raw_file(
     if not target.is_file():
         raise HTTPException(status_code=404, detail="File not found")
     filename = target.name
-    headers = {"Content-Disposition": f'attachment; filename="{filename}"'} if download else {}
-    return FileResponse(target, filename=filename if download else None, headers=headers)
+    return FileResponse(target, filename=filename if download else None)
 
 
 @router.get("/api/brain/download-zip")
@@ -314,11 +314,12 @@ def list_cloud_files(
                 rel = f.relative_to(brain_root)
                 if any(p.startswith(".git") for p in rel.parts):
                     continue
+                rel_str = str(rel)
                 items.append({
                     "name": f.name,
-                    "path": str(rel),
+                    "path": rel_str,
                     "size": f.stat().st_size,
                     "folder": str(rel.parent) if str(rel.parent) != "." else "",
-                    "download_url": f"/api/brain/raw?path={str(rel)}&download=true",
+                    "download_url": f"/api/brain/raw?path={quote(rel_str, safe='/')}&download=true",
                 })
     return {"brain": b, "files": items, "count": len(items)}

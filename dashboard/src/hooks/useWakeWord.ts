@@ -30,6 +30,9 @@ export function playWakeChime() {
     osc2.connect(gain);
     gain.connect(ctx.destination);
 
+    osc1.onended = () => {
+      void ctx.close().catch(() => {});
+    };
     osc1.start(now);
     osc2.start(now);
     osc1.stop(now + 0.28);
@@ -64,8 +67,14 @@ export function useWakeWord({
   const recRef = useRef<unknown>(null);
   const onWakeRef = useRef(onWake);
   onWakeRef.current = onWake;
+  const enabledRef = useRef(enabled);
+  enabledRef.current = enabled;
+  const pausedRef = useRef(paused);
+  pausedRef.current = paused;
   const isRunningRef = useRef(false);
   const cooldownRef = useRef(false);
+  const restartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cooldownTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Check Web Speech API support
   useEffect(() => {
@@ -77,6 +86,10 @@ export function useWakeWord({
 
   const stop = useCallback(() => {
     isRunningRef.current = false;
+    if (restartTimerRef.current) {
+      clearTimeout(restartTimerRef.current);
+      restartTimerRef.current = null;
+    }
     setListening(false);
     const rec = recRef.current as { stop?: () => void; abort?: () => void } | null;
     if (rec) {
@@ -147,8 +160,10 @@ export function useWakeWord({
             onWakeRef.current(trailing);
 
             // Cooldown for 2.5 seconds to avoid rapid duplicate triggers
-            setTimeout(() => {
+            if (cooldownTimerRef.current) clearTimeout(cooldownTimerRef.current);
+            cooldownTimerRef.current = setTimeout(() => {
               cooldownRef.current = false;
+              cooldownTimerRef.current = null;
             }, 2500);
             break;
           }
@@ -173,9 +188,11 @@ export function useWakeWord({
         // Cleanly recreate a fresh SpeechRecognition instance on timeout/pause
         isRunningRef.current = false;
         recRef.current = null;
-        if (enabled && !paused) {
-          setTimeout(() => {
-            if (!isRunningRef.current && !paused) {
+        if (enabledRef.current && !pausedRef.current) {
+          if (restartTimerRef.current) clearTimeout(restartTimerRef.current);
+          restartTimerRef.current = setTimeout(() => {
+            restartTimerRef.current = null;
+            if (!isRunningRef.current && enabledRef.current && !pausedRef.current) {
               start();
             }
           }, 350);
@@ -203,6 +220,10 @@ export function useWakeWord({
     }
     return () => {
       stop();
+      if (cooldownTimerRef.current) {
+        clearTimeout(cooldownTimerRef.current);
+        cooldownTimerRef.current = null;
+      }
     };
   }, [enabled, paused, start, stop]);
 

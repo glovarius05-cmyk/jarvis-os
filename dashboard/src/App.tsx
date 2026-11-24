@@ -52,7 +52,7 @@ export function App() {
     void refreshAll();
   }, [refreshAll]);
 
-  const { connected, liveTurns, errors, sendMessage, stopTurn } = useChatSocket({
+  const { connected, liveTurns, errors, pendingApprovals, resolveApproval, sendMessage, stopTurn } = useChatSocket({
     onFinal: () => setChatRefreshTick((n) => n + 1),
     onTurnStart: () => setChatRefreshTick((n) => n + 1),
   });
@@ -131,6 +131,8 @@ export function App() {
             errors={errors}
             onSend={sendMessage}
             onStop={stopTurn}
+            pendingApprovals={pendingApprovals}
+            onResolveApproval={resolveApproval}
             onNavigate={(target) => {
               if (["chat", "brains", "studio", "models", "connections", "tasks", "learn", "channels"].includes(target)) {
                 setPage(target as PageId);

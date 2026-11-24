@@ -28,13 +28,33 @@ def register(ctx) -> None:
 
         vaults = ctx.services.get("vaults")
         hub = ctx.services.get("hub")
+        settings_store = ctx.services.get("settings")
         if vaults is None:
             return "ERROR: VaultManager unavailable."
         cwd = vaults.brain_path(brain)
         extra = [hub.hub_token()] if hub is not None else []
-        res = await run_fenced_command(effective_cmd, cwd=cwd, timeout_s=timeout, extra_secrets=extra)
+
+        sandbox_cfg: dict = {}
+        if settings_store is not None:
+            try:
+                sandbox_cfg = settings_store.load().get("sandbox", {}) if hasattr(settings_store, "load") else {}
+            except Exception:
+                sandbox_cfg = {}
+
+        mode = "docker" if target_env == "docker" and not args.get("container") else str(sandbox_cfg.get("mode") or "local").lower()
+        res = await run_fenced_command(
+            effective_cmd,
+            cwd=cwd,
+            timeout_s=timeout,
+            extra_secrets=extra,
+            sandbox_mode=mode if target_env != "ssh" else "local",
+            docker_image=str(sandbox_cfg.get("docker_image") or "python:3.12-slim"),
+            docker_network=str(sandbox_cfg.get("network") or "none"),
+            memory_limit=str(sandbox_cfg.get("memory_limit") or "512m"),
+            cpus=str(sandbox_cfg.get("cpus") or "1.0"),
+        )
         status = f"exit_code={res.exit_code}" + (" (TIMED OUT)" if res.timed_out else "")
-        prefix = f"[{target_env.upper()}] " if target_env != "local" else ""
+        prefix = f"[{target_env.upper()}] " if target_env != "local" else (f"[DOCKER-SANDBOX] " if res.sandbox == "docker" else "")
         out = f"{prefix}{status}\n{res.stdout}"
         if res.stderr:
             out += f"\n[stderr]\n{res.stderr}"

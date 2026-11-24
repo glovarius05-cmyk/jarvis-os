@@ -455,17 +455,21 @@ def save_webpage_to_vault(
         slug = slugify(page.title) or slugify(urlparse(page.url).netloc)
         rel_path = f"sources/{slug}.md"
 
+    clean_title = page.title.replace('"', "").replace("\r", " ").replace("\n", " ").strip()
+    clean_author = page.author.replace('"', "").replace("\r", " ").replace("\n", " ").strip()
+    clean_desc = page.description.replace('"', "").replace("\r", " ").replace("\n", " ").strip()
+
     now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
     lines = [
         "---",
-        f"title: \"{page.title.replace('\"', '')}\"",
-        f"source_url: \"{page.url}\"",
-        f"ingested_at: \"{now_iso}\"",
+        f'title: "{clean_title}"',
+        f'source_url: "{page.url}"',
+        f'ingested_at: "{now_iso}"',
     ]
-    if page.author:
-        lines.append(f"author: \"{page.author.replace('\"', '')}\"")
-    if page.description:
-        lines.append(f"description: \"{page.description.replace('\"', '')}\"")
+    if clean_author:
+        lines.append(f'author: "{clean_author}"')
+    if clean_desc:
+        lines.append(f'description: "{clean_desc}"')
     lines.extend([
         "tags:",
         "  - web",

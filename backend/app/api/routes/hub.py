@@ -1144,3 +1144,37 @@ async def get_agensi_status(container: AppContainer = Depends(get_container)) ->
             "tools_count": 0,
         }
 
+
+# ---- Interactive Approval Gate Routes ----
+
+
+class ResolveApprovalPayload(BaseModel):
+    decision: str = Field(..., pattern="^(approve|deny)$", description="'approve' or 'deny'")
+
+
+@router.get("/api/hub/approvals/pending")
+async def list_pending_approvals(
+    session_id: str | None = None,
+    container: AppContainer = Depends(get_container),
+) -> dict[str, Any]:
+    """List pending tool executions awaiting human confirmation."""
+    pending = container.approvals.list_pending(session_id=session_id)
+    return {"ok": True, "pending": pending}
+
+
+@router.post("/api/hub/approvals/{approval_id}/resolve")
+async def resolve_approval(
+    approval_id: str,
+    payload: ResolveApprovalPayload,
+    container: AppContainer = Depends(get_container),
+) -> dict[str, Any]:
+    """Approve or deny a paused tool execution."""
+    resolved = await container.approvals.resolve(
+        approval_id,
+        approved=(payload.decision == "approve"),
+    )
+    if resolved is None:
+        raise HTTPException(status_code=404, detail="Approval request not found, expired, or already resolved")
+    return {"ok": True, "approval": resolved}
+
+

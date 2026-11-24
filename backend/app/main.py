@@ -28,6 +28,7 @@ from app.api.routes import (
     sessions,
     settings,
     studio,
+    telemetry,
     terminal_webhooks,
     v1_compat,
     work,
@@ -104,6 +105,7 @@ def create_app(container: AppContainer | None = None, *, enable_scheduler: bool 
     application.include_router(learn.router)
     application.include_router(experience.router)
     application.include_router(channels.router)
+    application.include_router(telemetry.router)
     application.include_router(terminal_webhooks.router)
     application.include_router(v1_compat.router)
 

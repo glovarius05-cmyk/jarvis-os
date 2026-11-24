@@ -25,6 +25,7 @@ from app.config import AppPaths, DEFAULT_BRAIN_NAME, SettingsStore, is_public_bi
 from app.engines.base import EngineProtocol
 from app.engines.compaction import SessionCompactor
 from app.engines.router import EngineRouter
+from app.hub.approval import ApprovalManager
 from app.hub.gateway import MCPHubGateway
 from app.hub.plugins import PluginHost
 from app.runtime.chat_runtime import ChatRuntime
@@ -35,6 +36,7 @@ from app.runtime.learn import SelfLearningEngine
 from app.runtime.loops import LoopRunner
 from app.runtime.reminders import ReminderStore
 from app.runtime.sessions import SessionStore
+from app.runtime.telemetry import TraceStore
 from app.runtime.usage import UsageStore
 from app.runtime.webhooks import WebhookStore
 from app.runtime.workflows import WorkflowRunner
@@ -62,6 +64,8 @@ class AppContainer:
     engine_router: EngineRouter
     inbox: InboxStore
     usage: UsageStore
+    telemetry: TraceStore
+    approvals: ApprovalManager
     compactor: SessionCompactor
     learner: SelfLearningEngine
     experience: ExperienceStore
@@ -176,6 +180,16 @@ class AppContainer:
         hub.set_experience_store(experience)
         inbox = InboxStore(paths.state_dir, session_store)
         usage = UsageStore(paths.state_dir)
+        telemetry = TraceStore(paths.state_dir)
+        hub.set_telemetry(telemetry)
+        engine_router.set_telemetry(telemetry)
+
+        approval_cfg = settings_store.load().get("approval", {})
+        approvals = ApprovalManager(
+            default_timeout_s=float(approval_cfg.get("timeout_s", 120.0))
+        )
+        hub.set_approval_manager(approvals, settings_store)
+        plugin_services["approvals"] = approvals
         compactor = SessionCompactor(
             state_dir=paths.state_dir,
             sessions=session_store,
@@ -230,9 +244,11 @@ class AppContainer:
             hub=hub,
             compactor=compactor,
             usage=usage,
+            telemetry=telemetry,
             engine_override=engine_override,
         )
         inbox.set_ws_publisher(chat_runtime.publish)
+        approvals.add_notifier(chat_runtime.publish)
 
         turn_shell = TurnShell(
             settings=settings_store,
@@ -279,6 +295,8 @@ class AppContainer:
             engine_router=engine_router,
             inbox=inbox,
             usage=usage,
+            telemetry=telemetry,
+            approvals=approvals,
             compactor=compactor,
             learner=learner,
             experience=experience,

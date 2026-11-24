@@ -18,7 +18,7 @@ from typing import Any
 import httpx
 
 from app import APP_VERSION
-from app.brain.vault import VaultManager
+from app.brain.vault import VaultManager, VaultPathError, safe_resolve
 from app.engines.base import ToolExecutor
 from app.hub.builtin_tools import ToolDefinition, build_builtin_tools
 from app.hub.mcp_client import MCPClientPool, MCPConnectionStore
@@ -43,6 +43,7 @@ class MCPHubGateway:
         self._code_dir = code_dir
         self._state_dir = state_dir
         self._port = port
+        self._vaults = vaults
         self._token_path = state_dir / ".hub_token"
         self._cached_token: str = ""
 
@@ -57,6 +58,9 @@ class MCPHubGateway:
         self._hybrid_index: Any = None
         self._character_manager: Any = None
         self._skills_store: Any = None
+        self._telemetry: Any = None
+        self._approval_manager: Any = None
+        self._settings_store: Any = None
         self._builtins = build_builtin_tools(
             vaults=vaults,
             result_store=self.result_store,
@@ -95,6 +99,13 @@ class MCPHubGateway:
 
     def set_skills_store(self, store: Any) -> None:
         self._skills_store = store
+
+    def set_telemetry(self, telemetry: Any) -> None:
+        self._telemetry = telemetry
+
+    def set_approval_manager(self, manager: Any, settings: Any = None) -> None:
+        self._approval_manager = manager
+        self._settings_store = settings
 
     def hub_url(self) -> str:
         return f"http://127.0.0.1:{self._port}/hub/mcp"
@@ -248,6 +259,51 @@ class MCPHubGateway:
             )
             return f"ERROR: {reason}"
 
+        # Human-in-the-loop interactive approval gate
+        if self._approval_manager is not None:
+            approval_cfg = {}
+            if self._settings_store is not None:
+                try:
+                    loaded = self._settings_store.load()
+                    approval_cfg = loaded.get("approval", {}) if isinstance(loaded, dict) else {}
+                except Exception:
+                    approval_cfg = {}
+
+            require_for_full = bool(approval_cfg.get("require_for_full_tools", False))
+            auto_approved = set(approval_cfg.get("auto_approve_tools", []))
+            timeout_s = float(approval_cfg.get("timeout_s", 120.0))
+
+            req_level = tool.required_perm if isinstance(tool.required_perm, PermLevel) else PermLevel.parse(tool.required_perm, PermLevel.FULL)
+            needs_approval = False
+            if name not in auto_approved and require_for_full:
+                if req_level == PermLevel.FULL:
+                    needs_approval = True
+
+            if needs_approval:
+                approved, reason_appr = await self._approval_manager.request_approval(
+                    session_id=session_id or "default",
+                    brain=brain,
+                    tool_name=name,
+                    args=args or {},
+                    reason=f"Tool '{name}' requires human confirmation (Full permission level)",
+                    channel="web",
+                    timeout_s=timeout_s,
+                )
+                if not approved:
+                    self.audit.record(
+                        AuditEntry(
+                            ts=time.time(),
+                            brain=brain,
+                            session_id=session_id,
+                            run_mode=run_mode,
+                            tool=name,
+                            source=tool.source,
+                            allowed=False,
+                            reason=f"Approval denied: {reason_appr}",
+                        )
+                    )
+                    return f"ERROR: Execution of '{name}' denied: {reason_appr}"
+
         if self._hook_runner is not None:
             await self._hook_runner(
                 "pre_tool_call",
@@ -288,6 +344,21 @@ class MCPHubGateway:
                 duration_ms=elapsed_ms,
             )
         )
+        if self._telemetry is not None:
+            is_err = str(raw_result or "").startswith("ERROR:")
+            self._telemetry.record_span(
+                name=f"tool:{name}",
+                kind="tool",
+                status="error" if is_err else "ok",
+                duration_ms=elapsed_ms,
+                attributes={
+                    "tool": name,
+                    "source": tool.source,
+                    "run_mode": run_mode,
+                    "brain": brain,
+                },
+                error=str(raw_result)[:500] if is_err else "",
+            )
 
         safe_text = self.hide_hub_token(raw_result)
         if for_model and tool.shape_output:
@@ -326,7 +397,7 @@ class MCPHubGateway:
                 "id": req_id,
                 "result": {
                     "protocolVersion": "2024-11-05",
-                    "capabilities": {"tools": {}},
+                    "capabilities": {"tools": {}, "resources": {}, "prompts": {}},
                     "serverInfo": {"name": "jarvis-mcp-hub", "version": APP_VERSION},
                 },
             }
@@ -370,6 +441,72 @@ class MCPHubGateway:
                     "isError": is_err,
                 },
             }
+
+        if method == "resources/list":
+            root = self._vaults.brain_path(brain)
+            resources: list[dict[str, Any]] = []
+            if root.is_dir():
+                for f in sorted(root.rglob("*.md")):
+                    if not f.is_file():
+                        continue
+                    rel = f.relative_to(root)
+                    if any(part.startswith(".") for part in rel.parts):
+                        continue
+                    rel_str = rel.as_posix()
+                    resources.append({
+                        "uri": f"jarvis://vault/{rel_str}",
+                        "name": rel_str,
+                        "description": f"Second Brain note ({brain}): {rel_str}",
+                        "mimeType": "text/markdown",
+                    })
+                    if len(resources) >= 200:
+                        break
+            return {"jsonrpc": "2.0", "id": req_id, "result": {"resources": resources}}
+
+        if method == "resources/read":
+            uri = str(params.get("uri") or "").strip()
+            prefix = "jarvis://vault/"
+            if not uri.startswith(prefix):
+                return {"jsonrpc": "2.0", "id": req_id, "error": {"code": -32602, "message": f"Unsupported resource URI: {uri}"}}
+            rel_path = uri[len(prefix) :]
+            try:
+                target = safe_resolve(self._vaults.brain_path(brain), rel_path)
+            except (ValueError, VaultPathError) as exc:
+                return {"jsonrpc": "2.0", "id": req_id, "error": {"code": -32602, "message": str(exc)}}
+            if not target.is_file():
+                return {"jsonrpc": "2.0", "id": req_id, "error": {"code": -32002, "message": f"Resource not found: {uri}"}}
+            text = target.read_text(encoding="utf-8", errors="replace")
+            return {"jsonrpc": "2.0", "id": req_id, "result": {"contents": [{"uri": uri, "mimeType": "text/markdown", "text": text}]}}
+
+        if method == "prompts/list":
+            prompts_list: list[dict[str, Any]] = []
+            if self._skills_store is not None:
+                for skill in self._skills_store.list_skills(brain):
+                    if not skill.enabled:
+                        continue
+                    prompts_list.append({
+                        "name": skill.slug,
+                        "description": skill.description or skill.name,
+                        "arguments": [{"name": "input", "description": "Optional task context", "required": False}],
+                    })
+            return {"jsonrpc": "2.0", "id": req_id, "result": {"prompts": prompts_list}}
+
+        if method == "prompts/get":
+            prompt_name = str(params.get("name") or "").strip()
+            prompt_args = params.get("arguments") if isinstance(params.get("arguments"), dict) else {}
+            if self._skills_store is None:
+                return {"jsonrpc": "2.0", "id": req_id, "error": {"code": -32602, "message": "Skills store unavailable"}}
+            matched = next((s for s in self._skills_store.list_skills(brain) if s.slug == prompt_name and s.enabled), None)
+            if matched is None:
+                return {"jsonrpc": "2.0", "id": req_id, "error": {"code": -32602, "message": f"Prompt not found: {prompt_name}"}}
+            try:
+                skill_file = safe_resolve(self._vaults.brain_path(brain), matched.path)
+                body = skill_file.read_text(encoding="utf-8", errors="replace")
+            except Exception:
+                body = matched.description or matched.name
+            user_input = str(prompt_args.get("input") or "").strip()
+            combined = f"{body}\n\nTask input:\n{user_input}" if user_input else body
+            return {"jsonrpc": "2.0", "id": req_id, "result": {"description": matched.description or matched.name, "messages": [{"role": "user", "content": {"type": "text", "text": combined}}]}}
 
         return {
             "jsonrpc": "2.0",

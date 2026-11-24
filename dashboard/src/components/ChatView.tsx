@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Bot,
+  Check,
   Download,
   FileCode,
   FileSpreadsheet,
@@ -12,6 +13,7 @@ import {
   Plus,
   Search,
   Send,
+  ShieldAlert,
   Square,
   Trash2,
   User,
@@ -21,6 +23,7 @@ import {
 } from "lucide-react";
 import {
   api,
+  type ApprovalItem,
   type MessageItem,
   type ProviderStatus,
   type SearchHit,
@@ -76,6 +79,8 @@ interface ChatViewProps {
   onSend: (sessionId: string, content: string, provider: string, model: string, mode: string) => boolean;
   onStop: (sessionId: string) => void;
   onNavigate?: (page: string) => void;
+  pendingApprovals?: ApprovalItem[];
+  onResolveApproval?: (approvalId: string, decision: "approve" | "deny") => Promise<void>;
   refreshTrigger: number;
   t: (key: string) => string;
 }
@@ -91,6 +96,8 @@ export function ChatView({
   onSend,
   onStop,
   onNavigate: _onNavigate,
+  pendingApprovals,
+  onResolveApproval,
   refreshTrigger,
   t,
 }: ChatViewProps) {
@@ -112,6 +119,7 @@ export function ChatView({
     }
   });
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioUrlRef = useRef<string | null>(null);
   const recRef = useRef<unknown>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const prevTurnRef = useRef<LiveTurnState | undefined>(undefined);
@@ -156,6 +164,9 @@ export function ChatView({
 
   const activeTurn = selectedId ? liveTurns[selectedId] : undefined;
   const activeError = selectedId ? errors[selectedId] : undefined;
+  const activeApprovals = (pendingApprovals ?? []).filter(
+    (a) => !a.session_id || a.session_id === selectedId || a.session_id === "default"
+  );
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -195,6 +206,10 @@ export function ChatView({
       audioRef.current.pause();
       audioRef.current.currentTime = 0;
       audioRef.current = null;
+    }
+    if (audioUrlRef.current) {
+      URL.revokeObjectURL(audioUrlRef.current);
+      audioUrlRef.current = null;
     }
     if (typeof window !== "undefined" && "speechSynthesis" in window) {
       window.speechSynthesis.cancel();
@@ -254,17 +269,28 @@ export function ChatView({
         const res = await api.synthesizeTTS(text, savedVoice);
         setLoadingAudioId(null);
         if (res.audioUrl) {
-          const audio = new Audio(res.audioUrl);
+          const objectUrl = res.audioUrl;
+          audioUrlRef.current = objectUrl;
+          const audio = new Audio(objectUrl);
           audioRef.current = audio;
+          const releaseAudio = () => {
+            audioRef.current = null;
+            if (audioUrlRef.current === objectUrl) {
+              URL.revokeObjectURL(objectUrl);
+              audioUrlRef.current = null;
+            }
+          };
           audio.onended = () => {
             setPlayingMessageId(null);
-            audioRef.current = null;
+            releaseAudio();
           };
           audio.onerror = () => {
+            releaseAudio();
             speakBrowserFallback(text, messageId);
           };
           setPlayingMessageId(messageId);
           await audio.play().catch(() => {
+            releaseAudio();
             speakBrowserFallback(text, messageId);
           });
         } else {
@@ -970,7 +996,7 @@ export function ChatView({
             <div className="mx-auto flex max-w-3xl items-center justify-between text-xs text-amber-300">
               <span className="flex items-center gap-2">
                 <Volume2 className="h-3.5 w-3.5 animate-pulse text-amber-400" />
-                <span>Озвучивание ответа (Edge TTS ru-RU-DmitryNeural)...</span>
+                <span>Озвучивание ответа ({(() => { try { return localStorage.getItem("jarvis_selected_voice") || "ru-RU-DmitryNeural"; } catch { return "ru-RU-DmitryNeural"; } })()})...</span>
               </span>
               <button
                 type="button"
@@ -1002,6 +1028,50 @@ export function ChatView({
               >
                 {t("chat.micStop")}
               </button>
+            </div>
+          </div>
+        )}
+
+        {/* Human-in-the-Loop Approval Gate Banner */}
+        {activeApprovals.length > 0 && (
+          <div className="border-t border-amber-500/40 bg-amber-500/10 px-6 py-3">
+            <div className="mx-auto max-w-3xl space-y-3">
+              {activeApprovals.map((req) => (
+                <div key={req.approval_id} className="rounded-xl border border-amber-500/30 bg-zinc-950/90 p-3.5 shadow-lg">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="flex items-center gap-1.5 text-xs font-semibold text-amber-300">
+                      <ShieldAlert className="h-4 w-4 text-amber-400" />
+                      Запрос подтверждения (Human-in-the-Loop)
+                    </span>
+                    <span className="rounded bg-amber-500/20 px-2 py-0.5 font-mono text-[11px] text-amber-200 border border-amber-500/30">
+                      {req.tool_name}
+                    </span>
+                  </div>
+                  <p className="mt-1.5 text-xs text-zinc-300">{req.reason}</p>
+                  {req.args && Object.keys(req.args).length > 0 && (
+                    <pre className="mt-2 max-h-24 overflow-auto rounded bg-zinc-900 p-2 text-[11px] font-mono text-zinc-400 border border-zinc-800">
+                      {JSON.stringify(req.args, null, 2)}
+                    </pre>
+                  )}
+                  <div className="mt-3 flex items-center justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void onResolveApproval?.(req.approval_id, "deny")}
+                      className="rounded-lg border border-rose-500/40 bg-rose-500/20 px-3 py-1.5 text-xs font-medium text-rose-300 hover:bg-rose-500/30 transition"
+                    >
+                      Отклонить
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void onResolveApproval?.(req.approval_id, "approve")}
+                      className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-3.5 py-1.5 text-xs font-medium text-white hover:bg-emerald-500 transition shadow"
+                    >
+                      <Check className="h-3.5 w-3.5" />
+                      Разрешить выполнение
+                    </button>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         )}

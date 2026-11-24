@@ -44,6 +44,7 @@ def _default_settings() -> dict[str, Any]:
             "main_model": "openrouter/auto",
             "aux_provider": "local-llama",
             "aux_model": "llama3.1:8b",
+            "fallback_chain": [],
         },
         "local_llama": {
             "base_url": "http://127.0.0.1:11434/v1",
@@ -61,6 +62,18 @@ def _default_settings() -> dict[str, Any]:
         "voice": {
             "tts_voice": "ru-RU-DmitryNeural",
             "tts_rate": "+5%",
+        },
+        "approval": {
+            "require_for_full_tools": False,
+            "timeout_s": 120,
+            "auto_approve_tools": [],
+        },
+        "sandbox": {
+            "mode": "local",
+            "docker_image": "python:3.12-slim",
+            "network": "none",
+            "memory_limit": "512m",
+            "cpus": "1.0",
         },
         "openrouter_api_key": "",
         "gemini_api_key": "",

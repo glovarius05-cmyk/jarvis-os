@@ -21,6 +21,7 @@ from app.engines.router import EngineRouter
 from app.hub.gateway import MCPHubGateway
 from app.runtime.honesty_guard import apply_honesty_guard
 from app.runtime.sessions import SessionStore
+from app.runtime.telemetry import TraceStore
 from app.runtime.usage import UsageStore
 
 Writer = Callable[[dict[str, Any]], Awaitable[None]]
@@ -79,6 +80,7 @@ class ChatRuntime:
         hub: MCPHubGateway | None = None,
         compactor: SessionCompactor | None = None,
         usage: UsageStore | None = None,
+        telemetry: TraceStore | None = None,
         engine_override: EngineProtocol | None = None,
     ) -> None:
         self._sessions = sessions
@@ -87,6 +89,7 @@ class ChatRuntime:
         self._hub = hub
         self._compactor = compactor
         self._usage = usage
+        self._telemetry = telemetry
         self._engine_override = engine_override
         self._clients: dict[str, _Client] = {}
         self._jobs: dict[str, ChatJob] = {}
@@ -261,6 +264,19 @@ class ChatRuntime:
         cancel_event: asyncio.Event,
         user_message_id: int,
     ) -> None:
+        trace_handle = (
+            self._telemetry.start_trace(
+                session_id=session_id,
+                brain=brain,
+                channel=channel,
+                provider=provider,
+                model=model,
+                run_mode=run_mode,
+                meta={"user_message_id": user_message_id},
+            )
+            if self._telemetry is not None
+            else None
+        )
         self.publish(
             {
                 "type": "turn_start",
@@ -269,6 +285,7 @@ class ChatRuntime:
                 "provider": provider,
                 "model": model,
                 "mode": run_mode,
+                "trace_id": trace_handle.trace_id if trace_handle is not None else "",
             }
         )
 
@@ -337,44 +354,73 @@ class ChatRuntime:
             final_text = ""
             final_usage: dict[str, Any] = {}
             had_error = False
+            error_text = ""
             created_bg_job = False
+            effective_provider = provider
+            effective_model = model
+            llm_t0 = time.perf_counter()
 
-            async for ev in engine.stream(req):
-                job = self._jobs.get(session_id)
-                if ev.type == "text":
-                    if job is not None:
-                        job.accumulated_text += ev.content
-                    self.publish(
-                        {
-                            "type": "stream",
-                            "session_id": session_id,
-                            "content": ev.content,
-                            "provider": provider,
-                            "model": model,
-                        }
-                    )
-                elif ev.type in {"tool_call", "tool_result"}:
-                    if ev.type == "tool_call" and ev.tool_name in {"jarvis_task", "jarvis_schedule"}:
-                        created_bg_job = True
-                    tool_payload = {"session_id": session_id, **ev.to_dict()}
-                    if job is not None:
-                        job.tool_events.append(tool_payload)
-                    self.publish(tool_payload)
-                elif ev.type == "error":
-                    had_error = True
-                    self.publish(
-                        {
-                            "type": "error",
-                            "session_id": session_id,
-                            "content": ev.content,
-                            "provider": provider,
-                            "model": model,
-                        }
-                    )
-                    break
-                elif ev.type == "final":
-                    final_text = ev.content
-                    final_usage = ev.usage
+            from contextlib import nullcontext
+            trace_ctx = self._telemetry.bind_trace(trace_handle) if (self._telemetry and trace_handle) else nullcontext()
+            with trace_ctx:
+                async for ev in engine.stream(req):
+                    job = self._jobs.get(session_id)
+                    if ev.type == "text":
+                        if job is not None:
+                            job.accumulated_text += ev.content
+                        self.publish(
+                            {
+                                "type": "stream",
+                                "session_id": session_id,
+                                "content": ev.content,
+                                "provider": effective_provider,
+                                "model": effective_model,
+                            }
+                        )
+                    elif ev.type in {"tool_call", "tool_result"}:
+                        if ev.type == "tool_call" and ev.tool_name in {"jarvis_task", "jarvis_schedule"}:
+                            created_bg_job = True
+                        tool_payload = {"session_id": session_id, **ev.to_dict()}
+                        if job is not None:
+                            job.tool_events.append(tool_payload)
+                        self.publish(tool_payload)
+                    elif ev.type == "error":
+                        had_error = True
+                        error_text = ev.content
+                        self.publish(
+                            {
+                                "type": "error",
+                                "session_id": session_id,
+                                "content": ev.content,
+                                "provider": effective_provider,
+                                "model": effective_model,
+                            }
+                        )
+                        break
+                    elif ev.type == "final":
+                        final_text = ev.content
+                        final_usage = ev.usage
+                        if isinstance(ev.usage, dict):
+                            effective_provider = str(ev.usage.get("provider") or effective_provider)
+                            effective_model = str(ev.usage.get("model") or effective_model)
+
+            llm_ms = (time.perf_counter() - llm_t0) * 1000.0
+            if self._telemetry is not None and trace_handle is not None:
+                self._telemetry.record_span(
+                    trace_id=trace_handle.trace_id,
+                    parent_span_id=trace_handle.root_span_id,
+                    name=f"llm:{effective_provider}/{effective_model}",
+                    kind="llm",
+                    status="error" if had_error else "ok",
+                    duration_ms=llm_ms,
+                    attributes={
+                        "provider": effective_provider,
+                        "model": effective_model,
+                        "input_tokens": int(final_usage.get("input_tokens") or 0),
+                        "output_tokens": int(final_usage.get("output_tokens") or 0),
+                    },
+                    error=error_text,
+                )
 
             if not had_error:
                 job = self._jobs.get(session_id)
@@ -386,22 +432,33 @@ class ChatRuntime:
                     session_id,
                     "assistant",
                     answer,
-                    provider=provider,
-                    model=model,
+                    provider=effective_provider,
+                    model=effective_model,
                     meta={
                         "usage": final_usage,
                         "cancelled": cancel_event.is_set(),
                         "honesty_guard": honesty_flag,
+                        "trace_id": trace_handle.trace_id if trace_handle is not None else "",
                     },
                 )
                 if self._usage is not None:
                     self._usage.record(
                         brain=brain,
                         source="chat",
-                        provider=provider,
-                        model=model,
+                        provider=effective_provider,
+                        model=effective_model,
                         input_tokens=int(final_usage.get("input_tokens") or 0),
                         output_tokens=int(final_usage.get("output_tokens") or 0),
+                    )
+                if self._telemetry is not None and trace_handle is not None:
+                    self._telemetry.finish_trace(
+                        trace_handle,
+                        status="cancelled" if cancel_event.is_set() else "ok",
+                        provider=effective_provider,
+                        model=effective_model,
+                        input_tokens=int(final_usage.get("input_tokens") or 0),
+                        output_tokens=int(final_usage.get("output_tokens") or 0),
+                        meta={"message_id": saved.id, "honesty_guard": honesty_flag},
                     )
                 self.publish(
                     {
@@ -409,15 +466,28 @@ class ChatRuntime:
                         "session_id": session_id,
                         "message_id": saved.id,
                         "content": answer,
-                        "provider": provider,
-                        "model": model,
+                        "provider": effective_provider,
+                        "model": effective_model,
                         "usage": final_usage,
                         "cancelled": cancel_event.is_set(),
+                        "trace_id": trace_handle.trace_id if trace_handle is not None else "",
                     }
                 )
+            elif self._telemetry is not None and trace_handle is not None:
+                self._telemetry.finish_trace(
+                    trace_handle,
+                    status="error",
+                    provider=effective_provider,
+                    model=effective_model,
+                    error=error_text,
+                )
         except asyncio.CancelledError:
+            if self._telemetry is not None and trace_handle is not None:
+                self._telemetry.finish_trace(trace_handle, status="cancelled")
             raise
         except Exception as exc:  # noqa: BLE001
+            if self._telemetry is not None and trace_handle is not None:
+                self._telemetry.finish_trace(trace_handle, status="error", error=str(exc))
             self.publish(
                 {
                     "type": "error",

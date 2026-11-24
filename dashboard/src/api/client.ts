@@ -369,6 +369,18 @@ export interface ExperienceItem {
   last_used_at: number;
 }
 
+export interface ApprovalItem {
+  approval_id: string;
+  session_id: string;
+  brain: string;
+  tool_name: string;
+  args: Record<string, unknown>;
+  reason: string;
+  channel: string;
+  status: string;
+  created_at: number;
+}
+
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
     headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
@@ -419,6 +431,15 @@ export const api = {
   resetAgensi: () =>
     requestJson<{ ok: boolean; message: string }>("/api/hub/agensi/reset", {
       method: "POST",
+    }),
+  listPendingApprovals: (sessionId?: string) => {
+    const q = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : "";
+    return requestJson<{ ok: boolean; pending: ApprovalItem[] }>(`/api/hub/approvals/pending${q}`);
+  },
+  resolveApproval: (approvalId: string, decision: "approve" | "deny") =>
+    requestJson<{ ok: boolean; approval: ApprovalItem }>(`/api/hub/approvals/${encodeURIComponent(approvalId)}/resolve`, {
+      method: "POST",
+      body: JSON.stringify({ decision }),
     }),
   listBrains: () => requestJson<BrainsResponse>("/api/brains"),
   createBrain: (name: string, activate = true) =>

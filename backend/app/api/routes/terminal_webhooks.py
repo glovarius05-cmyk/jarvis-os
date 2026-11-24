@@ -45,12 +45,18 @@ async def terminal_exec(
 ) -> dict[str, Any]:
     brain = container.settings.load_public()["active_brain"]
     target_cwd = Path(payload.cwd).expanduser().resolve() if payload.cwd.strip() else container.vaults.brain_path(brain)
+    sandbox_cfg = container.settings.load().get("sandbox", {}) if hasattr(container.settings, "load") else {}
     try:
         res = await run_fenced_command(
             payload.command,
             cwd=target_cwd,
             timeout_s=payload.timeout_s,
             extra_secrets=[container.hub.hub_token()],
+            sandbox_mode=str(sandbox_cfg.get("mode") or "local").lower(),
+            docker_image=str(sandbox_cfg.get("docker_image") or "python:3.12-slim"),
+            docker_network=str(sandbox_cfg.get("network") or "none"),
+            memory_limit=str(sandbox_cfg.get("memory_limit") or "512m"),
+            cpus=str(sandbox_cfg.get("cpus") or "1.0"),
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
