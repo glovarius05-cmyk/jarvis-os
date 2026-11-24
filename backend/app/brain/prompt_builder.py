@@ -165,13 +165,15 @@ class PromptBuilder:
                         if aid:
                             details.append(f"account_id: `{aid}`")
                         if em:
-                            details.append(f"email: `{em}`")
+                            lbl = "email" if "@" in em else "user"
+                            details.append(f"{lbl}: `{em}`")
                         details_str = f" ({', '.join(details)})" if details else ""
                         lines.append(f"- {app.upper()}: connected{details_str}")
                     lines.append(
-                        "You can directly check emails, list unread messages, manage calendar, or create posts using available tools.\n"
+                        "You can directly check emails, list unread messages, manage calendar, check GitHub repos/issues, or create posts using available tools.\n"
                         "IMPORTANT: Never ask the user for connected_account_id or say it is missing - Jarvis automatically injects and routes the connected account ID to your tool calls.\n"
-                        "To check Gmail inbox or search emails, call `composio_gmail(action='list', query='in:inbox')` or `mcp__composio__GMAIL_LIST_MESSAGES(query='in:inbox')`."
+                        "To check Gmail inbox or search emails, call `composio_gmail(action='list', query='in:inbox')` or `mcp__composio__GMAIL_LIST_MESSAGES(query='in:inbox')`.\n"
+                        "To check GitHub repositories, issues, or PRs, call `composio_github(action='repos')` or `composio_github(action='issues', repo='owner/repo')`."
                     )
                     sections.append("\n".join(lines))
             except Exception:

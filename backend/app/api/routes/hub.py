@@ -367,22 +367,51 @@ def parse_composio_json(raw: str) -> dict[str, Any]:
             cleaned = m.group(1).strip()
     try:
         res = json.loads(cleaned)
-        return res if isinstance(res, dict) else {}
+        if isinstance(res, dict):
+            return res
+        if isinstance(res, list):
+            return {"items": res}
     except Exception:
-        m = re.search(r'(\{.*\})', cleaned, re.DOTALL)
+        m = re.search(r'(\{.*\}|\[.*\])', cleaned, re.DOTALL)
         if m:
             try:
                 res = json.loads(m.group(1))
-                return res if isinstance(res, dict) else {}
+                if isinstance(res, dict):
+                    return res
+                if isinstance(res, list):
+                    return {"items": res}
             except Exception:
                 pass
     return {}
 
 
+def extract_user_identifier(it: Any) -> str:
+    """Extract username, email, or account alias from account dictionary."""
+    em = extract_email_from_obj(it)
+    if em:
+        return em
+    if not isinstance(it, dict):
+        return ""
+    for k in ("login", "username", "alias", "account_identifier", "identifier", "name"):
+        v = it.get(k)
+        if isinstance(v, str) and v.strip() and not any(bad in v.lower() for bad in ("composio", "default", "none")):
+            return v.strip()
+    for parent in ("state", "params", "data", "metadata", "profile", "auth_config"):
+        sub = it.get(parent)
+        if isinstance(sub, dict):
+            for k in ("login", "username", "alias", "identifier", "name"):
+                v = sub.get(k)
+                if isinstance(v, str) and v.strip() and not any(bad in v.lower() for bad in ("composio", "default", "none")):
+                    return v.strip()
+    return ""
+
+
 def _persist_found_email(container: AppContainer, app_slug: str, email: str) -> None:
-    """Helper to store discovered account email in settings."""
+    """Helper to store discovered account email or username in settings."""
     clean = (email or "").strip()
-    if not clean or "@" not in clean:
+    if not clean:
+        return
+    if app_slug in ("gmail", "googlemail") and "@" not in clean:
         return
     try:
         cfg = container.settings.load()
@@ -612,7 +641,7 @@ async def get_composio_status(container: AppContainer = Depends(get_container)) 
                                             c_id = a.get("id") or a.get("nanoid")
                                             if c_id and str(c_id).startswith("ca_"):
                                                 ca_id = str(c_id)
-                                            e = extract_email_from_obj(a)
+                                            e = extract_user_identifier(a)
                                             if e:
                                                 email = e
                                     entry: dict[str, Any] = {"app": norm_slug, "status": "ACTIVE", "id": ca_id}
@@ -722,6 +751,24 @@ async def get_composio_status(container: AppContainer = Depends(get_container)) 
 
         saved_emails = dict(cfg.get("composio_account_emails") or {})
         saved_ids = dict(cfg.get("composio_account_ids") or {})
+
+        for s_slug, s_id in saved_ids.items():
+            if s_slug not in accounts_by_app and s_id:
+                accounts_by_app[s_slug] = {
+                    "app": s_slug,
+                    "status": "ACTIVE",
+                    "id": s_id,
+                    "email": saved_emails.get(s_slug, ""),
+                }
+        for s_slug, s_em in saved_emails.items():
+            if s_slug not in accounts_by_app and s_em:
+                accounts_by_app[s_slug] = {
+                    "app": s_slug,
+                    "status": "ACTIVE",
+                    "id": saved_ids.get(s_slug, f"local_{s_slug}"),
+                    "email": s_em,
+                }
+
         for app_slug, acc_entry in accounts_by_app.items():
             if not acc_entry.get("email") and app_slug in saved_emails:
                 acc_entry["email"] = saved_emails[app_slug]
@@ -861,18 +908,72 @@ async def initiate_composio_connect(
     if toolkit_slug in ("twitter", "x"):
         return {"ok": True, "app": "twitter", "auth_url": dashboard_url}
 
-    # 1. Try Composio MCP connection tool if available
+    # 1. Try Composio MCP connection tool directly on connect.composio.dev/mcp or via hub
+    mcp_headers_to_try = []
+    if key.lower().startswith("ck"):
+        mcp_headers_to_try.append({"x-consumer-api-key": key, "Content-Type": "application/json"})
+        mcp_headers_to_try.append({"x-api-key": key, "Content-Type": "application/json"})
+    else:
+        mcp_headers_to_try.append({"x-api-key": key, "Content-Type": "application/json"})
+        mcp_headers_to_try.append({"x-consumer-api-key": key, "Content-Type": "application/json"})
+
+    for m_hdrs in mcp_headers_to_try:
+        for reinit in (True, False):
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    call_res = await client.post(
+                        "https://connect.composio.dev/mcp",
+                        json={
+                            "jsonrpc": "2.0",
+                            "method": "tools/call",
+                            "params": {
+                                "name": "COMPOSIO_MANAGE_CONNECTIONS",
+                                "arguments": {"toolkits": [toolkit_slug], "reinitiate_all": reinit},
+                            },
+                            "id": 10,
+                        },
+                        headers=m_hdrs,
+                    )
+                    if call_res.status_code == 200:
+                        data = call_res.json().get("result", {})
+                        raw_str = ""
+                        if isinstance(data, dict):
+                            content = data.get("content", [])
+                            if isinstance(content, list) and content:
+                                raw_str = content[0].get("text", "")
+                        if not raw_str and isinstance(data, str):
+                            raw_str = data
+                        res_obj = parse_composio_json(raw_str) if raw_str else (data if isinstance(data, dict) else {})
+                        data_part = res_obj.get("data", {}) if isinstance(res_obj, dict) else {}
+                        results_map = (
+                            data_part.get("results")
+                            or res_obj.get("results")
+                            or (data_part if isinstance(data_part, dict) else {})
+                        )
+                        res_info = results_map.get(toolkit_slug, {}) if isinstance(results_map, dict) else {}
+                        auth_url = res_info.get("redirect_url") or res_obj.get("redirect_url") or ""
+                        if not auth_url and "dashboard.composio.dev" in str(res_info.get("error_message", "")):
+                            m = re.search(r"https://dashboard\.composio\.dev/[^\s\)\>]+", res_info["error_message"])
+                            if m:
+                                auth_url = m.group(0)
+                        if auth_url:
+                            return {"ok": True, "app": toolkit_slug, "auth_url": auth_url, "raw": res_info}
+            except Exception:
+                pass
+
     try:
         active_brain = container.settings.load_public().get("active_brain") or "Brain Default"
         raw = await container.hub.call_tool(
             name="mcp__composio__COMPOSIO_MANAGE_CONNECTIONS",
-            args={"toolkits": [toolkit_slug]},
+            args={"toolkits": [toolkit_slug], "reinitiate_all": True},
             brain=active_brain,
             run_mode="full",
             for_model=False,
         )
-        data = json.loads(raw)
-        res_info = data.get("data", {}).get("results", {}).get(toolkit_slug, {})
+        data = parse_composio_json(raw)
+        data_part = data.get("data", {}) if isinstance(data, dict) else {}
+        results_map = data_part.get("results") or data.get("results") or {}
+        res_info = results_map.get(toolkit_slug, {}) if isinstance(results_map, dict) else {}
         auth_url = res_info.get("redirect_url") or ""
         if not auth_url and "dashboard.composio.dev" in res_info.get("error_message", ""):
             m = re.search(r"https://dashboard\.composio\.dev/[^\s\)\>]+", res_info["error_message"])

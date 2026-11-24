@@ -640,17 +640,17 @@ export function ConnectionsView() {
                     )}
                   </div>
                   <p className="mt-1 text-[11px] text-zinc-400">{platform.desc}</p>
-                  {isConnected && (
+                  {(isConnected || editingEmailApp === platform.id) && (
                     <div className="mt-2 pt-2 border-t border-zinc-800/50">
                       {editingEmailApp === platform.id ? (
                         <div className="space-y-1.5 rounded bg-zinc-900/80 p-2 border border-zinc-700/60">
                           <div>
-                            <label className="text-[9px] text-zinc-400 font-medium">Email адрес:</label>
+                            <label className="text-[9px] text-zinc-400 font-medium">Email или Username (логин):</label>
                             <input
                               type="text"
                               value={emailInput}
                               onChange={(e) => setEmailInput(e.target.value)}
-                              placeholder="your.email@gmail.com"
+                              placeholder={platform.id === "github" ? "your-github-username" : "your.email@gmail.com"}
                               className="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-0.5 font-mono text-[11px] text-zinc-100 placeholder:text-zinc-600 focus:border-sky-500 focus:outline-none"
                               autoFocus
                             />
@@ -728,14 +728,27 @@ export function ConnectionsView() {
                     <ExternalLink className="h-3 w-3" />
                   </button>
                   {!isConnected && composioValid && (
-                    <button
-                      type="button"
-                      onClick={() => void handleConfirmPlatform(platform.id, true)}
-                      className="inline-flex w-full items-center justify-center gap-1 text-[11px] text-zinc-500 hover:text-amber-400 transition py-0.5"
-                      title="Если вы уже выполнили вход в Composio в браузере, нажмите для подтверждения"
-                    >
-                      <span>Уже подключил в Composio</span>
-                    </button>
+                    <div className="flex items-center justify-between gap-1 pt-0.5">
+                      <button
+                        type="button"
+                        onClick={() => void handleConfirmPlatform(platform.id, true)}
+                        className="text-[10px] text-zinc-500 hover:text-amber-400 transition"
+                        title="Если вы уже выполнили вход в Composio в браузере, нажмите для подтверждения"
+                      >
+                        Уже подключил
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingEmailApp(platform.id);
+                          setEmailInput("");
+                          setAccountIdInput("");
+                        }}
+                        className="text-[10px] text-sky-400 hover:text-sky-300 hover:underline transition"
+                      >
+                        Указать ID (ca_...)
+                      </button>
+                    </div>
                   )}
                   {isConnected && (
                     <button

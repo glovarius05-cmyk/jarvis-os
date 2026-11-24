@@ -17,7 +17,7 @@ from typing import Any
 
 import httpx
 
-from app.api.routes.hub import extract_app_slug, parse_composio_json
+from app.api.routes.hub import extract_app_slug, extract_user_identifier, parse_composio_json
 
 COMPOSIO_API_BASE = "https://backend.composio.dev/api/v3.1"
 
@@ -130,6 +130,58 @@ async def _execute_composio_action(
 
     last_error = ""
 
+    # When using a Consumer Key (ck_...), Composio Connect MCP is the primary engine
+    if api_key.startswith("ck"):
+        call_params = {
+            "name": "COMPOSIO_EXECUTE_TOOL",
+            "arguments": {
+                "action_name": action_name,
+                "tool_name": action_name,
+                "arguments": args,
+                **({"connected_account_id": real_ca_id} if real_ca_id else {}),
+                "user_id": effective_user,
+            },
+        }
+        if real_ca_id and "connected_account_id" not in args:
+            call_params["arguments"]["arguments"] = {**args, "connected_account_id": real_ca_id}
+
+        rpc_payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": call_params,
+        }
+        for headers in headers_variants:
+            try:
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    res = await client.post("https://connect.composio.dev/mcp", headers=headers, json=rpc_payload)
+                    if res.status_code == 200:
+                        data = res.json().get("result", {})
+                        raw_text = ""
+                        if isinstance(data, dict):
+                            if data.get("isError"):
+                                last_error = json.dumps(data)
+                                continue
+                            content = data.get("content", [])
+                            if isinstance(content, list) and content:
+                                raw_text = content[0].get("text", "")
+                        if not raw_text and isinstance(data, str):
+                            raw_text = data
+                        if raw_text:
+                            parsed = parse_composio_json(raw_text)
+                            if parsed and isinstance(parsed, dict) and (parsed.get("successful") is False or parsed.get("success") is False):
+                                last_error = str(parsed.get("error") or parsed.get("message") or raw_text[:200])
+                                continue
+                            if parsed:
+                                return {"success": True, "data": parsed, "status_code": 200}
+                            return {"success": True, "data": raw_text, "status_code": 200}
+                        if data:
+                            return {"success": True, "data": data, "status_code": 200}
+            except Exception as ex:
+                last_error = str(ex)
+                continue
+
+    # REST endpoints (for standard ak_ project keys or if MCP is unavailable)
     for url in endpoints:
         for payload in payloads:
             for headers in headers_variants:
@@ -253,77 +305,82 @@ async def _get_connected_apps(ctx, api_key: str) -> dict[str, dict[str, Any]]:
         except Exception:
             pass
 
-    # 2. REST API queries
-    rest_urls = [
-        f"{COMPOSIO_API_BASE}/connected_accounts?account_type=ALL",
-        f"{COMPOSIO_API_BASE}/connected_accounts",
-        f"{COMPOSIO_API_BASE}/connected_accounts?user_ids=default",
-        "https://backend.composio.dev/api/v3/connected_accounts?account_type=ALL",
-        "https://backend.composio.dev/api/v3/connected_accounts",
-        "https://backend.composio.dev/api/v3/connected_accounts?user_ids=default",
-    ]
-    if api_key.startswith("ck"):
-        headers_variants = [
-            {"x-consumer-api-key": api_key, "Accept": "application/json"},
-            {"x-api-key": api_key, "Accept": "application/json"},
-            {"Authorization": f"Bearer {api_key}", "Accept": "application/json"},
+    # 2. REST API queries (only for ak_ project keys, skipped for ck_ consumer keys which only support MCP)
+    if not api_key.startswith("ck"):
+        rest_urls = [
+            f"{COMPOSIO_API_BASE}/connected_accounts?account_type=ALL",
+            f"{COMPOSIO_API_BASE}/connected_accounts",
+            f"{COMPOSIO_API_BASE}/connected_accounts?user_ids=default",
+            "https://backend.composio.dev/api/v3/connected_accounts?account_type=ALL",
+            "https://backend.composio.dev/api/v3/connected_accounts",
+            "https://backend.composio.dev/api/v3/connected_accounts?user_ids=default",
         ]
-    else:
         headers_variants = [
             {"x-api-key": api_key, "Accept": "application/json"},
             {"x-consumer-api-key": api_key, "Accept": "application/json"},
             {"Authorization": f"Bearer {api_key}", "Accept": "application/json"},
         ]
-    for url in rest_urls:
-        for hdrs in headers_variants:
-            try:
-                async with httpx.AsyncClient(timeout=8.0) as client:
-                    res = await client.get(url, headers=hdrs)
-                    if res.status_code == 200:
-                        data = res.json()
-                        items = []
-                        if isinstance(data, list):
-                            items = data
-                        elif isinstance(data, dict):
-                            items = (
-                                data.get("items")
-                                or data.get("connected_accounts")
-                                or data.get("data")
-                                or data.get("results")
-                                or []
-                            )
-                        for it in items:
-                            if not isinstance(it, dict):
-                                continue
-                            slug = extract_app_slug(it)
-                            if not slug:
-                                continue
-                            raw_st = str(it.get("status") or "ACTIVE").upper()
-                            st = "ACTIVE" if raw_st in ("ACTIVE", "CONNECTED", "READY", "ENABLED", "INITIATED", "INITIALIZED") else raw_st
-                            raw_id = str(it.get("id") or it.get("nanoid") or it.get("accountId") or "")
-                            user_id = str(it.get("user_id") or it.get("userId") or "default")
-                            email = _extract_email_from_account(it)
+        for url in rest_urls:
+            for hdrs in headers_variants:
+                try:
+                    async with httpx.AsyncClient(timeout=8.0) as client:
+                        res = await client.get(url, headers=hdrs)
+                        if res.status_code == 200:
+                            data = res.json()
+                            items = []
+                            if isinstance(data, list):
+                                items = data
+                            elif isinstance(data, dict):
+                                items = (
+                                    data.get("items")
+                                    or data.get("connected_accounts")
+                                    or data.get("data")
+                                    or data.get("results")
+                                    or []
+                                )
+                            for it in items:
+                                if not isinstance(it, dict):
+                                    continue
+                                slug = extract_app_slug(it)
+                                if not slug:
+                                    continue
+                                raw_st = str(it.get("status") or "ACTIVE").upper()
+                                st = "ACTIVE" if raw_st in ("ACTIVE", "CONNECTED", "READY", "ENABLED", "INITIATED", "INITIALIZED") else raw_st
+                                raw_id = str(it.get("id") or it.get("nanoid") or it.get("accountId") or "")
+                                user_id = str(it.get("user_id") or it.get("userId") or "default")
+                                email = _extract_email_from_account(it)
 
-                            existing = accounts.get(slug, {})
-                            acc_id = raw_id or existing.get("id") or slug
-                            acc_entry: dict[str, Any] = {
-                                "app": slug,
-                                "status": st,
-                                "id": acc_id,
-                                "user_id": user_id,
-                            }
-                            if email or existing.get("email"):
-                                acc_entry["email"] = email or existing.get("email")
-                            alias = str(it.get("alias") or it.get("account_identifier") or existing.get("alias") or "")
-                            if alias:
-                                acc_entry["alias"] = alias
-                            accounts[slug] = acc_entry
-            except Exception:
-                continue
+                                existing = accounts.get(slug, {})
+                                acc_id = raw_id or existing.get("id") or slug
+                                acc_entry: dict[str, Any] = {
+                                    "app": slug,
+                                    "status": st,
+                                    "id": acc_id,
+                                    "user_id": user_id,
+                                }
+                                if email or existing.get("email"):
+                                    acc_entry["email"] = email or existing.get("email")
+                                alias = str(it.get("alias") or it.get("account_identifier") or existing.get("alias") or "")
+                                if alias:
+                                    acc_entry["alias"] = alias
+                                accounts[slug] = acc_entry
+                except Exception:
+                    continue
 
     # 3. Direct MCP call to connect.composio.dev/mcp
     check_toolkits = ["gmail", "googlecalendar", "googlesheets", "github", "notion", "twitter", "linkedin", "instagram"]
-    for hdrs in headers_variants:
+    mcp_headers_variants = (
+        [
+            {"x-consumer-api-key": api_key, "Content-Type": "application/json"},
+            {"x-api-key": api_key, "Content-Type": "application/json"},
+        ]
+        if api_key.startswith("ck")
+        else [
+            {"x-api-key": api_key, "Content-Type": "application/json"},
+            {"x-consumer-api-key": api_key, "Content-Type": "application/json"},
+        ]
+    )
+    for hdrs in mcp_headers_variants:
         try:
             async with httpx.AsyncClient(timeout=8.0) as client:
                 call_res = await client.post(
@@ -394,7 +451,7 @@ async def _get_connected_apps(ctx, api_key: str) -> dict[str, dict[str, Any]]:
                                                         settings.update({"composio_account_ids": c_ids})
                                                 except Exception:
                                                     pass
-                                        e = _extract_email_from_account(a)
+                                        e = extract_user_identifier(a)
                                         if e:
                                             email = e
                                         u = a.get("user_id") or a.get("userId")
@@ -468,7 +525,23 @@ async def _get_connected_apps(ctx, api_key: str) -> dict[str, dict[str, Any]]:
             except Exception:
                 continue
 
-    # 6. Apply saved emails and account IDs fallback for any account
+    # 6. Apply saved emails, usernames, and account IDs fallback for any account
+    for s_slug, s_id in saved_ids.items():
+        if s_slug not in accounts and s_id:
+            accounts[s_slug] = {
+                "app": s_slug,
+                "status": "ACTIVE",
+                "id": s_id,
+                "email": saved_emails.get(s_slug, ""),
+            }
+    for s_slug, s_em in saved_emails.items():
+        if s_slug not in accounts and s_em:
+            accounts[s_slug] = {
+                "app": s_slug,
+                "status": "ACTIVE",
+                "id": saved_ids.get(s_slug, f"local_{s_slug}"),
+                "email": s_em,
+            }
     for s_slug, s_em in saved_emails.items():
         if s_slug in accounts and not accounts[s_slug].get("email") and s_em:
             accounts[s_slug]["email"] = s_em
@@ -519,7 +592,7 @@ def register(ctx) -> None:
     async def composio_connect(args: dict, _brain: str) -> str:
         app = str(args.get("app") or args.get("platform") or "").strip().lower()
         if not app:
-            return "ERROR: 'app' parameter is required (e.g. gmail, googlecalendar, twitter, linkedin, instagram)."
+            return "ERROR: 'app' parameter is required (e.g. gmail, github, googlecalendar, twitter, linkedin, instagram)."
 
         api_key = _get_api_key(ctx)
         if not api_key:
@@ -527,9 +600,66 @@ def register(ctx) -> None:
 
         norm_app = extract_app_slug(app) or app
         dashboard_url = f"https://dashboard.composio.dev/~/org/connect/apps/{norm_app}?open=true"
+
+        # Try to obtain real OAuth authorization link from Composio Connect MCP
+        auth_url = ""
+        mcp_headers = (
+            [
+                {"x-consumer-api-key": api_key, "Content-Type": "application/json"},
+                {"x-api-key": api_key, "Content-Type": "application/json"},
+            ]
+            if api_key.startswith("ck")
+            else [
+                {"x-api-key": api_key, "Content-Type": "application/json"},
+                {"x-consumer-api-key": api_key, "Content-Type": "application/json"},
+            ]
+        )
+        for hdrs in mcp_headers:
+            for reinit in (True, False):
+                try:
+                    async with httpx.AsyncClient(timeout=8.0) as client:
+                        call_res = await client.post(
+                            "https://connect.composio.dev/mcp",
+                            json={
+                                "jsonrpc": "2.0",
+                                "method": "tools/call",
+                                "params": {
+                                    "name": "COMPOSIO_MANAGE_CONNECTIONS",
+                                    "arguments": {"toolkits": [norm_app], "reinitiate_all": reinit},
+                                },
+                                "id": 10,
+                            },
+                            headers=hdrs,
+                        )
+                        if call_res.status_code == 200:
+                            data = call_res.json().get("result", {})
+                            raw_str = ""
+                            if isinstance(data, dict):
+                                content = data.get("content", [])
+                                if isinstance(content, list) and content:
+                                    raw_str = content[0].get("text", "")
+                            if not raw_str and isinstance(data, str):
+                                raw_str = data
+                            res_obj = parse_composio_json(raw_str) if raw_str else (data if isinstance(data, dict) else {})
+                            data_part = res_obj.get("data", {}) if isinstance(res_obj, dict) else {}
+                            results_map = (
+                                data_part.get("results")
+                                or res_obj.get("results")
+                                or (data_part if isinstance(data_part, dict) else {})
+                            )
+                            res_info = results_map.get(norm_app, {}) if isinstance(results_map, dict) else {}
+                            auth_url = res_info.get("redirect_url") or res_obj.get("redirect_url") or ""
+                            if auth_url:
+                                break
+                except Exception:
+                    pass
+            if auth_url:
+                break
+
+        link_to_show = auth_url or dashboard_url
         return (
             f"Для подключения {norm_app.upper()} перейдите по ссылке авторизации в браузере:\n"
-            f"{dashboard_url}\n"
+            f"{link_to_show}\n"
             f"После авторизации вернитесь в Jarvis OS и запустите composio_status для проверки."
         )
 
@@ -749,10 +879,207 @@ def register(ctx) -> None:
 
         return f"Неизвестное действие Календаря: {action}. Доступны: list, create."
 
+    async def composio_github(args: dict, _brain: str) -> str:
+        api_key = _get_api_key(ctx)
+        if not api_key:
+            return "ERROR: Composio API key is not configured. Add 'composio_api_key' in Settings."
+
+        action = str(args.get("action") or "repos").strip().lower()
+        repo = str(args.get("repo") or args.get("repository") or "").strip()
+        limit = int(args.get("limit") or 10)
+        title = str(args.get("title") or "").strip()
+        body = str(args.get("body") or "").strip()
+
+        accounts = await _get_connected_apps(ctx, api_key)
+        github_info = accounts.get("github", {})
+        ca_id = github_info.get("id")
+        user_id = github_info.get("user_id")
+
+        if not ca_id or not str(ca_id).startswith("ca_"):
+            settings_svc = ctx.services.get("settings")
+            if settings_svc is not None:
+                try:
+                    c_ids = settings_svc.load().get("composio_account_ids") or {}
+                    if c_ids.get("github"):
+                        ca_id = c_ids["github"]
+                except Exception:
+                    pass
+
+        owner = ""
+        repo_name = ""
+        if repo:
+            if "/" in repo:
+                parts = repo.split("/", 1)
+                owner, repo_name = parts[0].strip(), parts[1].strip()
+            else:
+                repo_name = repo
+
+        if action in ("profile", "user", "whoami", "me"):
+            res = await _execute_composio_action(
+                api_key,
+                "GITHUB_GET_THE_AUTHENTICATED_USER",
+                {},
+                connected_account_id=ca_id,
+                user_id=user_id,
+            )
+            if not res.get("success"):
+                res = await _execute_composio_action(
+                    api_key,
+                    "GITHUB_USERS_GET_AUTHENTICATED",
+                    {},
+                    connected_account_id=ca_id,
+                    user_id=user_id,
+                )
+            if res.get("success"):
+                pdata = res.get("data", {})
+                login = pdata.get("login") or pdata.get("username") or github_info.get("alias") or "подключен"
+                name = pdata.get("name") or login
+                repos_cnt = pdata.get("public_repos", "N/A")
+                return (
+                    f"Подключенный профиль GitHub:\n"
+                    f"- Пользователь: {login} ({name})\n"
+                    f"- Публичных репозиториев: {repos_cnt}\n"
+                    f"- Статус интеграции: АКТИВЕН"
+                )
+            if "github" in accounts:
+                return f"GitHub подключен в Composio (аккаунт: {ca_id or 'active'}), но запрос профиля вернул: {res.get('error')}"
+            return f"GitHub не подключен в Composio: {res.get('error')}"
+
+        if action in ("repos", "list", "repositories"):
+            res = await _execute_composio_action(
+                api_key,
+                "GITHUB_LIST_REPOSITORIES_FOR_THE_AUTHENTICATED_USER",
+                {"per_page": limit, "sort": "updated"},
+                connected_account_id=ca_id,
+                user_id=user_id,
+            )
+            if not res.get("success"):
+                res = await _execute_composio_action(
+                    api_key,
+                    "GITHUB_REPOS_LIST_FOR_AUTHENTICATED_USER",
+                    {"per_page": limit, "sort": "updated"},
+                    connected_account_id=ca_id,
+                    user_id=user_id,
+                )
+            if not res.get("success"):
+                res = await _execute_composio_action(
+                    api_key,
+                    "GITHUB_LIST_USER_REPOSITORIES",
+                    {"per_page": limit},
+                    connected_account_id=ca_id,
+                    user_id=user_id,
+                )
+            if res.get("success"):
+                data = res.get("data")
+                return f"Репозитории GitHub:\n{json.dumps(data, ensure_ascii=False, indent=2)}"
+            return f"Не удалось получить список репозиториев GitHub: {res.get('error')}"
+
+        if action in ("issues", "issue_list"):
+            if not repo_name:
+                return "ERROR: 'repo' (например, 'owner/repo_name') обязателен для получения списка issues."
+            payload: dict[str, Any] = {"per_page": limit, "state": "open"}
+            if owner:
+                payload["owner"] = owner
+            payload["repo"] = repo_name
+
+            res = await _execute_composio_action(
+                api_key,
+                "GITHUB_LIST_REPOSITORY_ISSUES",
+                payload,
+                connected_account_id=ca_id,
+                user_id=user_id,
+            )
+            if not res.get("success"):
+                res = await _execute_composio_action(
+                    api_key,
+                    "GITHUB_ISSUES_LIST_FOR_REPO",
+                    payload,
+                    connected_account_id=ca_id,
+                    user_id=user_id,
+                )
+            if res.get("success"):
+                return f"Issues в репозитории {repo}:\n{json.dumps(res.get('data'), ensure_ascii=False, indent=2)}"
+            return f"Не удалось получить issues для {repo}: {res.get('error')}"
+
+        if action in ("pulls", "prs", "pull_requests"):
+            if not repo_name:
+                return "ERROR: 'repo' (например, 'owner/repo_name') обязателен для получения списка pull requests."
+            payload = {"per_page": limit, "state": "open"}
+            if owner:
+                payload["owner"] = owner
+            payload["repo"] = repo_name
+
+            res = await _execute_composio_action(
+                api_key,
+                "GITHUB_LIST_PULL_REQUESTS",
+                payload,
+                connected_account_id=ca_id,
+                user_id=user_id,
+            )
+            if not res.get("success"):
+                res = await _execute_composio_action(
+                    api_key,
+                    "GITHUB_PULLS_LIST",
+                    payload,
+                    connected_account_id=ca_id,
+                    user_id=user_id,
+                )
+            if res.get("success"):
+                return f"Pull requests в репозитории {repo}:\n{json.dumps(res.get('data'), ensure_ascii=False, indent=2)}"
+            return f"Не удалось получить pull requests для {repo}: {res.get('error')}"
+
+        if action in ("create_issue", "new_issue"):
+            if not repo_name or not title:
+                return "ERROR: 'repo' (например, 'owner/repo') и 'title' обязательны для создания issue."
+            payload = {"title": title, "body": body}
+            if owner:
+                payload["owner"] = owner
+            payload["repo"] = repo_name
+
+            res = await _execute_composio_action(
+                api_key,
+                "GITHUB_CREATE_AN_ISSUE",
+                payload,
+                connected_account_id=ca_id,
+                user_id=user_id,
+            )
+            if not res.get("success"):
+                res = await _execute_composio_action(
+                    api_key,
+                    "GITHUB_ISSUES_CREATE",
+                    payload,
+                    connected_account_id=ca_id,
+                    user_id=user_id,
+                )
+            if res.get("success"):
+                return f"Issue успешно создан в {repo}!\n{json.dumps(res.get('data'), ensure_ascii=False, indent=2)}"
+            return f"Не удалось создать issue в {repo}: {res.get('error')}"
+
+        if action in ("star", "star_repo"):
+            if not repo_name:
+                return "ERROR: 'repo' обязателен для добавления в избранное (star)."
+            payload = {}
+            if owner:
+                payload["owner"] = owner
+            payload["repo"] = repo_name
+
+            res = await _execute_composio_action(
+                api_key,
+                "GITHUB_STAR_A_REPOSITORY_FOR_THE_AUTHENTICATED_USER",
+                payload,
+                connected_account_id=ca_id,
+                user_id=user_id,
+            )
+            if res.get("success"):
+                return f"Репозиторий {repo} успешно добавлен в избранное (star)!"
+            return f"Не удалось добавить в избранное {repo}: {res.get('error')}"
+
+        return f"Неизвестное действие GitHub: {action}. Доступны: profile, repos, issues, pulls, create_issue, star."
+
     async def composio_feed(args: dict, _brain: str) -> str:
         platform = str(args.get("platform") or "").strip().lower()
         if not platform:
-            return "ERROR: 'platform' parameter is required (e.g. twitter, linkedin, instagram, gmail, calendar)."
+            return "ERROR: 'platform' parameter is required (e.g. twitter, linkedin, instagram, gmail, calendar, github)."
 
         query = str(args.get("query") or "").strip()
         limit = int(args.get("limit") or 10)
@@ -761,6 +1088,8 @@ def register(ctx) -> None:
             return await composio_gmail({"action": "list", "query": query, "limit": limit}, _brain)
         if platform in ("googlecalendar", "calendar", "gcal"):
             return await composio_calendar({"action": "list", "limit": limit}, _brain)
+        if platform in ("github", "gh"):
+            return await composio_github({"action": "repos", "limit": limit}, _brain)
 
         api_key = _get_api_key(ctx)
         if not api_key:
@@ -951,6 +1280,42 @@ def register(ctx) -> None:
     )
 
     ctx.register_tool(
+        name="composio_github",
+        description="Interact with GitHub via Composio: inspect user profile, list repositories, view open issues/pull requests, or create issues.",
+        handler=composio_github,
+        min_mode="safe",
+        schema={
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["profile", "repos", "issues", "pulls", "create_issue", "star"],
+                    "description": "Action to perform: 'profile', 'repos' (list user repositories), 'issues' (list issues in repo), 'pulls' (list PRs), 'create_issue' (new issue), 'star' (star repo)",
+                    "default": "repos",
+                },
+                "repo": {
+                    "type": "string",
+                    "description": "Repository in format 'owner/repo_name' (e.g. 'octocat/Hello-World')",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of items to retrieve (default: 10)",
+                    "default": 10,
+                },
+                "title": {
+                    "type": "string",
+                    "description": "Issue title for action='create_issue'",
+                },
+                "body": {
+                    "type": "string",
+                    "description": "Issue body / description for action='create_issue'",
+                },
+            },
+            "required": ["action"],
+        },
+    )
+
+    ctx.register_tool(
         name="composio_feed",
         description="Fetch recent posts, timeline, mentions, or emails/calendar events from a connected integration.",
         handler=composio_feed,
@@ -960,7 +1325,7 @@ def register(ctx) -> None:
             "properties": {
                 "platform": {
                     "type": "string",
-                    "description": "Platform: twitter, linkedin, instagram, threads, facebook, gmail, calendar",
+                    "description": "Platform: twitter, linkedin, instagram, threads, facebook, gmail, calendar, github",
                 },
                 "limit": {
                     "type": "integer",

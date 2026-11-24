@@ -61,6 +61,7 @@ async def test_composio_social_plugin_tools_and_permissions(tmp_path: Path) -> N
     assert "composio_post" in tool_names
     assert "composio_gmail" in tool_names
     assert "composio_calendar" in tool_names
+    assert "composio_github" in tool_names
 
     # Check permission levels
     tool_map = {t["name"]: t for t in tools}
@@ -70,6 +71,7 @@ async def test_composio_social_plugin_tools_and_permissions(tmp_path: Path) -> N
     assert tool_map["composio_post"]["required_perm"] == "full"
     assert tool_map["composio_gmail"]["required_perm"] == "safe"
     assert tool_map["composio_calendar"]["required_perm"] == "safe"
+    assert tool_map["composio_github"]["required_perm"] == "safe"
 
     # Status check with no key configured
     status_out = await hub.call_tool(name="composio_status", args={}, brain="Brain Default", run_mode="suggest")
@@ -346,6 +348,85 @@ def test_composio_email_api_and_prompt_injection(tmp_path: Path) -> None:
     )
     assert "account_id: `ca_test_999`" in prompt2
     assert "Never ask the user for connected_account_id" in prompt2
+
+
+@pytest.mark.asyncio
+async def test_composio_github_tool_execution(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    code_dir = Path(__file__).resolve().parent.parent
+    ctr = AppContainer.build(
+        code_dir=code_dir,
+        state_dir=tmp_path / "state",
+        brains_dir=tmp_path / "brains",
+    )
+    hub = ctr.hub
+
+    ctr.settings.update({
+        "composio_api_key": "ck_test_consumer_key_12345",
+        "composio_account_ids": {"github": "ca_test_gh_999"},
+        "composio_account_emails": {"github": "testuser"},
+    })
+
+    import httpx
+
+    captured_mcp_posts = []
+
+    class MockAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+        async def post(self, url, headers=None, json=None):
+            captured_mcp_posts.append({"url": url, "headers": headers, "json": json})
+            if "connect.composio.dev/mcp" in url:
+                params = json.get("params", {})
+                if params.get("name") == "COMPOSIO_EXECUTE_TOOL":
+                    act = params.get("arguments", {}).get("action_name")
+                    if act == "GITHUB_GET_THE_AUTHENTICATED_USER":
+                        return httpx.Response(
+                            200,
+                            json={
+                                "result": {
+                                    "content": [
+                                        {
+                                            "type": "text",
+                                            "text": '```json\n{"login": "testuser", "name": "Test User", "public_repos": 12}\n```',
+                                        }
+                                    ]
+                                }
+                            },
+                        )
+                    if act == "GITHUB_LIST_REPOSITORIES_FOR_THE_AUTHENTICATED_USER":
+                        return httpx.Response(
+                            200,
+                            json={
+                                "result": {
+                                    "content": [
+                                        {
+                                            "type": "text",
+                                            "text": '[{"name": "repo1", "full_name": "testuser/repo1"}]',
+                                        }
+                                    ]
+                                }
+                            },
+                        )
+            return httpx.Response(500)
+
+    monkeypatch.setattr(httpx, "AsyncClient", MockAsyncClient)
+
+    # 1. Profile action
+    res_prof = await hub.call_tool(name="composio_github", args={"action": "profile"}, brain="Brain Default", run_mode="safe")
+    assert "testuser" in res_prof
+    assert "12" in res_prof
+
+    # 2. Repos action
+    res_repos = await hub.call_tool(name="composio_github", args={"action": "repos"}, brain="Brain Default", run_mode="safe")
+    assert "repo1" in res_repos
+
 
 
 
