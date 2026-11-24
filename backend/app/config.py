@@ -180,12 +180,11 @@ class SettingsStore:
         with self._lock:
             raw = self._read_raw()
             decrypted = self._secrets.decrypt_dict_fields(raw, SECRET_FIELDS)
-            if not self._path.exists():
-                for field in SECRET_FIELDS:
-                    if not decrypted.get(field):
-                        env_val = os.getenv(field.upper(), "")
-                        if env_val:
-                            decrypted[field] = env_val
+            for field in SECRET_FIELDS:
+                if not decrypted.get(field):
+                    env_val = os.getenv(field.upper(), "")
+                    if env_val:
+                        decrypted[field] = env_val
             return decrypted
 
     def load_public(self) -> dict[str, Any]:

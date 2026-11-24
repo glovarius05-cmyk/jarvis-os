@@ -81,7 +81,8 @@ def _get_api_key(ctx) -> str:
         key = str(cfg.get("composio_api_key") or "").strip()
         if key:
             return key
-    return ""
+    import os
+    return os.getenv("COMPOSIO_API_KEY", "").strip()
 
 
 async def _execute_composio_action(

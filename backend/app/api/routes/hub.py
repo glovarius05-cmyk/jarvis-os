@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import os
 import re
 import secrets
 import sys
@@ -483,7 +484,7 @@ async def reset_composio_key(container: AppContainer = Depends(get_container)) -
 
 @router.get("/api/hub/composio/status")
 async def get_composio_status(container: AppContainer = Depends(get_container)) -> dict[str, Any]:
-    raw_key = container.settings.load().get("composio_api_key") or ""
+    raw_key = container.settings.load().get("composio_api_key") or os.getenv("COMPOSIO_API_KEY", "")
     key = sanitize_composio_key(raw_key)
     if not key:
         return {"configured": False, "valid": False, "accounts": [], "message": "Composio API key is not configured"}
@@ -841,7 +842,7 @@ async def initiate_composio_connect(
     payload: ComposioConnectPayload,
     container: AppContainer = Depends(get_container),
 ) -> dict[str, Any]:
-    raw_key = container.settings.load().get("composio_api_key") or ""
+    raw_key = container.settings.load().get("composio_api_key") or os.getenv("COMPOSIO_API_KEY", "")
     key = sanitize_composio_key(raw_key)
     if not key:
         raise HTTPException(status_code=400, detail="Composio API key is not configured in Settings")
