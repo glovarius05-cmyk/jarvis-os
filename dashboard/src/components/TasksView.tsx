@@ -113,6 +113,19 @@ export function TasksView() {
     }
   };
 
+  const handleRunReminder = async (id: string) => {
+    setBusyId(id);
+    setError(null);
+    try {
+      await api.runReminder(id);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to run reminder");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const tabs: { id: WorkTab; label: string; count: number; icon: typeof ListChecks }[] = [
     { id: "kanban", label: "Kanban", count: tasks.length, icon: ListChecks },
     { id: "loops", label: "Loops", count: loops.length, icon: Repeat },
@@ -393,12 +406,25 @@ export function TasksView() {
                     {r.cron} · {r.prompt}
                   </p>
                 </div>
-                <button
-                  onClick={() => void api.deleteReminder(r.id).then(refresh)}
-                  className="rounded p-1.5 text-zinc-500 hover:bg-zinc-800 hover:text-rose-400"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void handleRunReminder(r.id)}
+                    disabled={busyId === r.id}
+                    title="Запустить напоминание прямо сейчас (Тест)"
+                    className="inline-flex items-center gap-1 rounded border border-zinc-700 bg-zinc-800/80 px-2.5 py-1 text-xs text-zinc-200 hover:border-amber-500 hover:text-amber-300 disabled:opacity-50 transition"
+                  >
+                    <Play className="h-3 w-3" />
+                    <span>{busyId === r.id ? "Запуск..." : "Тест"}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void api.deleteReminder(r.id).then(refresh)}
+                    className="rounded p-1.5 text-zinc-500 hover:bg-zinc-800 hover:text-rose-400"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
               </div>
             ))}
           </div>

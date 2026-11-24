@@ -241,6 +241,21 @@ def delete_reminder(
     return {"ok": True}
 
 
+@router.post("/reminders/{reminder_id}/run")
+async def run_reminder(
+    reminder_id: str,
+    brain: str | None = Query(default=None),
+    container: AppContainer = Depends(get_container),
+) -> dict:
+    b = _brain(container, brain)
+    reminders = container.reminders.list_reminders(b)
+    target = next((r for r in reminders if r.get("id") == reminder_id), None)
+    if not target:
+        raise HTTPException(status_code=404, detail="Reminder not found")
+    result = await container.reminders.fire_reminder(b, target)
+    return {"ok": True, "result": result}
+
+
 # ---- Inbox ----
 
 @router.get("/inbox")

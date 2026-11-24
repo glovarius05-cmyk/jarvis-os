@@ -710,6 +710,10 @@ export const api = {
     }),
   deleteReminder: (id: string) =>
     requestJson<{ ok: boolean }>(`/api/work/reminders/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  runReminder: (id: string) =>
+    requestJson<{ ok: boolean; result: string }>(`/api/work/reminders/${encodeURIComponent(id)}/run`, {
+      method: "POST",
+    }),
   listInbox: () => requestJson<{ unread_count: number; items: InboxItemInfo[] }>("/api/work/inbox"),
   markInboxRead: () => requestJson<{ ok: boolean }>("/api/work/inbox/read", { method: "POST" }),
   runLearning: (dry_run = false) =>
