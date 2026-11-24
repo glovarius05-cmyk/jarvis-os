@@ -117,7 +117,7 @@ class WorkflowRunner:
         provider, model = self._router.resolve_target(
             override_provider=agent.model_provider,
             override_model=agent.model,
-            role="aux",
+            role="main",
         )
         engine = self._engine_override or self._router.build_engine(provider, brain=brain, run_mode=run_mode)
         tools = await self._hub.discover_schemas(brain=brain, run_mode=run_mode)

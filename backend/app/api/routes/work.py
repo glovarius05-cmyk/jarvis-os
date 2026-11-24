@@ -46,6 +46,8 @@ class CreateReminderPayload(BaseModel):
     run_at_ts: float = 0.0
     notify_only: bool = False
     mode: str = Field(default="auto", pattern="^(suggest|auto|full)$")
+    provider: str = ""
+    model: str = ""
     owner_chat: str = ""
     required_connections: list[str] = Field(default_factory=list)
     allow_missing: bool = False
@@ -221,6 +223,8 @@ def create_reminder(
             run_at_ts=payload.run_at_ts,
             notify_only=payload.notify_only,
             mode=payload.mode,
+            provider=payload.provider,
+            model=payload.model,
             owner_chat=payload.owner_chat,
             required_connections=payload.required_connections,
             allow_missing=payload.allow_missing,

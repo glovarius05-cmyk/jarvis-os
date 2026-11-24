@@ -238,6 +238,20 @@ def test_engine_router_resolution_priority(tmp_path: Path) -> None:
         pinned_provider="gemini-api",
     ) == ("local-llama", "llama3.2:3b")
 
+    # When aux_provider is set to openrouter without a key, but gemini_api_key is configured,
+    # aux gracefully falls back to main provider (gemini-api)
+    settings.update({
+        "gemini_api_key": "AIzaSyFakeKey",
+        "model": {
+            "main_provider": "gemini-api",
+            "main_model": "gemini-3.8-flash",
+            "aux_provider": "openrouter",
+            "aux_model": "openrouter/auto",
+        },
+    })
+    assert router.resolve_target(role="aux") == ("gemini-api", "gemini-3.8-flash")
+    assert router.resolve_target(role="main") == ("gemini-api", "gemini-3.8-flash")
+
 
 @pytest.mark.asyncio
 async def test_local_llama_num_ctx_and_mcp_filtering() -> None:

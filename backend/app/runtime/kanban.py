@@ -274,8 +274,22 @@ class KanbanRuntime:
             conn.commit()
         return self.get_task(tid)
 
-    async def _run_aux(self, *, brain: str, system_prompt: str, prompt: str, run_mode: str, session_id: str) -> str:
-        provider, model = self._router.resolve_target(role="aux")
+    async def _run_aux(
+        self,
+        *,
+        brain: str,
+        system_prompt: str,
+        prompt: str,
+        run_mode: str,
+        session_id: str,
+        override_provider: str = "",
+        override_model: str = "",
+    ) -> str:
+        provider, model = self._router.resolve_target(
+            override_provider=override_provider,
+            override_model=override_model,
+            role="main",
+        )
         engine = self._engine_override or self._router.build_engine(provider, brain=brain, run_mode=run_mode)
         tools = await self._hub.discover_schemas(brain=brain, run_mode=run_mode)
         executor = self._hub.make_executor(brain=brain, run_mode=run_mode, session_id=session_id)

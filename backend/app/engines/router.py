@@ -235,11 +235,33 @@ class EngineRouter:
         model_cfg = cfg.get("model") or {}
 
         if role == "aux":
-            default_provider = str(model_cfg.get("aux_provider") or "local-llama")
-            default_model = str(model_cfg.get("aux_model") or "llama3.1:8b")
+            aux_p = str(model_cfg.get("aux_provider") or "local-llama").strip()
+            aux_m = str(model_cfg.get("aux_model") or "llama3.1:8b").strip()
+            if aux_p in PROVIDER_MAP:
+                spec = PROVIDER_MAP[aux_p]
+                if spec.kind == "api" and spec.key_field and not str(cfg.get(spec.key_field) or "").strip():
+                    main_p = str(model_cfg.get("main_provider") or "openrouter").strip()
+                    main_spec = PROVIDER_MAP.get(main_p)
+                    if main_spec and (main_spec.kind != "api" or not main_spec.key_field or bool(str(cfg.get(main_spec.key_field) or "").strip())):
+                        aux_p = main_p
+                        aux_m = str(model_cfg.get("main_model") or "").strip()
+            default_provider = aux_p
+            default_model = aux_m
         else:
-            default_provider = str(model_cfg.get("main_provider") or "openrouter")
-            default_model = str(model_cfg.get("main_model") or "openrouter/auto")
+            main_p = str(model_cfg.get("main_provider") or "openrouter").strip()
+            main_m = str(model_cfg.get("main_model") or "openrouter/auto").strip()
+            if main_p == "openrouter" and not str(cfg.get("openrouter_api_key") or "").strip():
+                if str(cfg.get("gemini_api_key") or "").strip():
+                    main_p = "gemini-api"
+                    main_m = self._default_model_for("gemini-api", cfg)
+                elif str(cfg.get("openai_api_key") or "").strip():
+                    main_p = "openai"
+                    main_m = self._default_model_for("openai", cfg)
+                elif str(cfg.get("deepseek_api_key") or "").strip():
+                    main_p = "deepseek"
+                    main_m = self._default_model_for("deepseek", cfg)
+            default_provider = main_p
+            default_model = main_m
 
         provider = (override_provider or pinned_provider or default_provider).strip()
         if provider not in PROVIDER_MAP:

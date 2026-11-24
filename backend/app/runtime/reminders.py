@@ -160,6 +160,8 @@ class ReminderStore:
         run_at_ts: float = 0.0,
         notify_only: bool = False,
         mode: str = "auto",
+        provider: str = "",
+        model: str = "",
         owner_chat: str = "",
         required_connections: list[str] | None = None,
         allow_missing: bool = False,
@@ -185,6 +187,8 @@ class ReminderStore:
             "run_at_ts": float(run_at_ts),
             "notify_only": bool(notify_only),
             "mode": mode if mode in {"suggest", "auto", "full"} else "auto",
+            "provider": provider.strip(),
+            "model": model.strip(),
             "owner_chat": owner_chat.strip(),
             "enabled": True,
             "last_minute_key": "",
@@ -210,7 +214,13 @@ class ReminderStore:
         if item.get("notify_only"):
             body = str(item.get("prompt") or item.get("name"))
         else:
-            provider, model = self._router.resolve_target(role="aux")
+            item_provider = str(item.get("provider") or "").strip()
+            item_model = str(item.get("model") or "").strip()
+            provider, model = self._router.resolve_target(
+                override_provider=item_provider,
+                override_model=item_model,
+                role="main",
+            )
             mode = str(item.get("mode") or "auto")
             engine = self._engine_override or self._router.build_engine(provider, brain=brain, run_mode=mode)
             tools = await self._hub.discover_schemas(brain=brain, run_mode=mode)
@@ -227,14 +237,17 @@ class ReminderStore:
             )
             parts: list[str] = []
             final = ""
-            async for ev in engine.stream(req):
-                if ev.type == "text":
-                    parts.append(ev.content)
-                elif ev.type == "error":
-                    parts.append(f"ERROR: {ev.content}")
-                    break
-                elif ev.type == "final":
-                    final = ev.content
+            try:
+                async for ev in engine.stream(req):
+                    if ev.type == "text":
+                        parts.append(ev.content)
+                    elif ev.type == "error":
+                        parts.append(f"ERROR: {ev.content}")
+                        break
+                    elif ev.type == "final":
+                        final = ev.content
+            except Exception as exc:
+                parts.append(f"ERROR: {exc}")
             body = (final or "".join(parts)).strip()
 
         await self._inbox.deliver(

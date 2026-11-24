@@ -212,7 +212,13 @@ class LoopRunner:
                 st["fail_streak"] = 0
 
             try:
-                provider, model = self._router.resolve_target(role="aux")
+                loop_prov = str(loop.get("provider") or "").strip()
+                loop_mod = str(loop.get("model") or "").strip()
+                provider, model = self._router.resolve_target(
+                    override_provider=loop_prov,
+                    override_model=loop_mod,
+                    role="main",
+                )
                 engine = self._engine_override or self._router.build_engine(
                     provider, brain=brain, run_mode=loop["mode"]
                 )

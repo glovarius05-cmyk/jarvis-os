@@ -140,6 +140,28 @@ async def test_multi_loop_circuit_breaker_and_reminders_preconditions(
     assert len(fired) == 1
     assert any("Morning ping" in i.title for i in ctr.inbox.list_items(brain="Brain Default"))
 
+    # Non-notify reminder executes using main engine
+    captured_reqs: list[EngineRequest] = []
+    class _CaptureEngine:
+        async def stream(self, request: EngineRequest) -> AsyncIterator[EngineEvent]:
+            captured_reqs.append(request)
+            yield EngineEvent(type="text", content="Morning brief complete!")
+            yield EngineEvent(type="final", content="Morning brief complete!")
+
+    ctr.reminders._engine_override = _CaptureEngine()
+    created_exec = ctr.reminders.create_reminder(
+        brain="Brain Default",
+        name="Morning brief",
+        prompt="Synthesize news and kanban",
+        cron="0 9 * * *",
+        notify_only=False,
+        allow_missing=True,
+    )
+    body = await ctr.reminders.fire_reminder("Brain Default", created_exec["reminder"])
+    assert "Morning brief complete!" in body
+    assert len(captured_reqs) == 1
+    assert captured_reqs[0].provider == "openrouter"
+
 
 @pytest.mark.asyncio
 async def test_bundled_task_and_schedule_plugins_and_work_api(
