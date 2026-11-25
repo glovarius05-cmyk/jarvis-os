@@ -5,6 +5,7 @@ export interface LiveToolEvent {
   type: "tool_call" | "tool_result";
   tool_name?: string;
   content?: string;
+  timestamp?: number;
 }
 
 export interface LiveTurnState {
@@ -119,6 +120,7 @@ export function useChatSocket(handlers: ChatSocketHandlers = {}) {
                       type,
                       tool_name: String(msg.tool_name ?? ""),
                       content: String(msg.content ?? ""),
+                      timestamp: Date.now(),
                     },
                   ],
                 },

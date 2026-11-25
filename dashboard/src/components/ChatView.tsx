@@ -1,19 +1,29 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  AlertCircle,
   Bot,
+  Brain,
+  Calendar,
   Check,
+  ChevronDown,
+  ChevronRight,
+  Copy,
   Download,
   FileCode,
   FileSpreadsheet,
   FileText,
+  GitBranch,
   Image as ImageIcon,
   Loader2,
+  Mail,
   Mic,
   MicOff,
+  PanelRightOpen,
   Plus,
   Search,
   Send,
   ShieldAlert,
+  Sparkles,
   Square,
   Trash2,
   User,
@@ -67,6 +77,96 @@ function getFileIcon(name: string) {
   }
   return <FileText className="h-4 w-4 text-indigo-400" />;
 }
+
+function extractArtifactTitle(content: string): string {
+  const heading = content.match(/^#{1,3}\s+(.+)$/m);
+  if (heading?.[1]) return heading[1].trim().slice(0, 60);
+  const firstLine = content.split("\n").find((l) => l.trim().length > 0)?.trim() ?? "";
+  return firstLine.replace(/[*_`#]/g, "").slice(0, 50) || "Ответ Jarvis";
+}
+
+interface ToolTimelineStep {
+  name: string;
+  argsText: string;
+  resultText: string;
+  status: "running" | "ok" | "error";
+  durationSec?: string;
+}
+
+function buildToolTimeline(tools: LiveTurnState["tools"]): ToolTimelineStep[] {
+  const steps: ToolTimelineStep[] = [];
+  for (const ev of tools) {
+    const name = ev.tool_name || "tool";
+    if (ev.type === "tool_call") {
+      steps.push({
+        name,
+        argsText: ev.content || "",
+        resultText: "",
+        status: "running",
+        durationSec: ev.timestamp ? String(ev.timestamp) : undefined,
+      });
+    } else if (ev.type === "tool_result") {
+      const resText = ev.content || "";
+      const isErr = /^ERROR:/i.test(resText.trim()) || resText.includes("Permission denied");
+      let target: ToolTimelineStep | undefined;
+      for (let i = steps.length - 1; i >= 0; i--) {
+        if (steps[i].name === name && steps[i].status === "running") {
+          target = steps[i];
+          break;
+        }
+      }
+      if (!target) {
+        target = { name, argsText: "", resultText: resText, status: isErr ? "error" : "ok" };
+        steps.push(target);
+      } else {
+        target.resultText = resText;
+        target.status = isErr ? "error" : "ok";
+        if (target.durationSec && ev.timestamp) {
+          const ms = Math.max(0, ev.timestamp - Number(target.durationSec));
+          target.durationSec = `${(ms / 1000).toFixed(1)}s`;
+        } else {
+          target.durationSec = undefined;
+        }
+      }
+    }
+  }
+  return steps.map((s) => (s.status === "running" ? { ...s, durationSec: undefined } : s));
+}
+
+const QUICK_START_PROMPTS = [
+  {
+    id: "gmail",
+    title: "Проверить почту",
+    desc: "Сводка новых и непрочитанных писем за сегодня",
+    prompt: "Проверь мою почту за сегодня, покажи отправителей, темы и краткое содержание.",
+    color: "text-rose-400 bg-rose-500/10 border-rose-500/20",
+    icon: Mail,
+  },
+  {
+    id: "calendar",
+    title: "Встречи в Календаре",
+    desc: "Расписание событий и напоминаний на неделю",
+    prompt: "Какие у меня запланированы встречи и события в Google Календаре на эту неделю?",
+    color: "text-sky-400 bg-sky-500/10 border-sky-500/20",
+    icon: Calendar,
+  },
+  {
+    id: "github",
+    title: "Репозитории GitHub",
+    desc: "Статус проектов, последние репозитории и issues",
+    prompt: "Покажи список моих репозиториев на GitHub и их актуальный статус.",
+    color: "text-emerald-400 bg-emerald-500/10 border-emerald-500/20",
+    icon: GitBranch,
+  },
+  {
+    id: "brain",
+    title: "Заметки Второго мозга",
+    desc: "Обзор базы знаний, задач и ключевых фактов",
+    prompt: "Проанализируй мои последние заметки во Втором мозге и напомни главные текущие задачи.",
+    color: "text-amber-400 bg-amber-500/10 border-amber-500/20",
+    icon: Brain,
+  },
+];
 
 interface ChatViewProps {
   activeBrain: string;
@@ -130,6 +230,70 @@ export function ChatView({
   const [attachedFiles, setAttachedFiles] = useState<AttachedFileItem[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const [artifact, setArtifact] = useState<{ id: string | number; title: string; content: string } | null>(null);
+  const [artifactTab, setArtifactTab] = useState<"preview" | "raw">("preview");
+  const [copiedId, setCopiedId] = useState<string | number | null>(null);
+  const [savingBrainId, setSavingBrainId] = useState<string | number | null>(null);
+  const [savedBrainMsg, setSavedBrainMsg] = useState<string | null>(null);
+  const [expandedTools, setExpandedTools] = useState<Record<number, boolean>>({});
+
+  const handleCopyText = useCallback(async (id: string | number, text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedId(id);
+      window.setTimeout(() => setCopiedId((prev) => (prev === id ? null : prev)), 1800);
+    } catch {
+      // ignore clipboard errors
+    }
+  }, []);
+
+  const handleSaveToBrain = useCallback(async (id: string | number, content: string) => {
+    setSavingBrainId(id);
+    setSavedBrainMsg(null);
+    try {
+      const title = extractArtifactTitle(content)
+        .toLowerCase()
+        .replace(/[^\p{L}\p{N}\s-]/gu, "")
+        .replace(/\s+/g, "-")
+        .slice(0, 40) || `note-${Date.now()}`;
+      const path = `wiki/notes/${title}-${Date.now().toString().slice(-4)}.md`;
+      await api.writeBrainFile(path, content);
+      setSavedBrainMsg(`Сохранено: ${path}`);
+      window.setTimeout(() => setSavedBrainMsg(null), 3500);
+    } catch {
+      setSavedBrainMsg("Ошибка сохранения во Второй мозг");
+      window.setTimeout(() => setSavedBrainMsg(null), 3500);
+    } finally {
+      setSavingBrainId(null);
+    }
+  }, []);
+
+  const handleQuickPrompt = async (promptText: string) => {
+    let sid = selectedId;
+    if (!sid) {
+      const created = await api.createSession({ brain: activeBrain, title: t("chat.new") });
+      sid = created.id;
+      setSelectedId(sid);
+      await loadSessions();
+    }
+    const ok = onSend(sid, promptText, provider, model, runMode);
+    if (ok) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: Date.now(),
+          session_id: sid,
+          role: "user",
+          content: promptText,
+          provider,
+          model,
+          meta: {},
+          created_at: Date.now() / 1000,
+        },
+      ]);
+    }
+  };
 
   useEffect(() => {
     setProvider(defaultProvider);
@@ -855,140 +1019,265 @@ export function ChatView({
           </div>
         </header>
 
-        {/* Message List */}
-        <div className="flex-1 overflow-y-auto px-6 py-6">
-          <div className="mx-auto max-w-3xl space-y-5">
-            {messages.length === 0 && !activeTurn && (
-              <div className="mt-16 rounded-2xl border border-zinc-800/80 bg-zinc-900/40 p-8 text-center">
-                <Bot className="mx-auto mb-3 h-10 w-10 text-amber-400" />
-                <h3 className="text-lg font-semibold text-zinc-100">{t("chat.emptyTitle")}</h3>
-                <p className="mt-2 text-sm text-zinc-400">{t("chat.emptySubtitle")}</p>
-              </div>
-            )}
-
-            {messages.map((m) => {
-              const isUser = m.role === "user";
-              return (
-                <div key={m.id} className={`flex gap-3 ${isUser ? "justify-end" : "justify-start"}`}>
-                  {!isUser && (
-                    <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-amber-500/15 text-amber-400">
-                      <Bot className="h-4 w-4" />
-                    </div>
-                  )}
-                  <div
-                    className={`max-w-[85%] rounded-2xl px-4 py-3 ${
-                      isUser
-                        ? "bg-amber-500/15 text-zinc-100 border border-amber-500/30"
-                        : "bg-zinc-900/80 border border-zinc-800"
-                    }`}
-                  >
-                    {!isUser && (
-                      <div className="mb-1.5 flex items-center justify-between gap-2 text-[11px] font-mono text-zinc-500">
-                        <span>
-                          {m.provider || "jarvis"} · {m.model || "assistant"}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => void playSpeech(m.id, m.content)}
-                          title={playingMessageId === m.id ? t("chat.stopSpeech") : t("chat.playSpeech")}
-                          className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] transition ${
-                            playingMessageId === m.id
-                              ? "bg-amber-500/20 text-amber-300 font-medium"
-                              : "text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300"
-                          }`}
-                        >
-                          {loadingAudioId === m.id ? (
-                            <Loader2 className="h-3 w-3 animate-spin text-amber-400" />
-                          ) : playingMessageId === m.id ? (
-                            <>
-                              <Square className="h-3 w-3 fill-amber-400 text-amber-400" />
-                              <span>{t("chat.stop")}</span>
-                            </>
-                          ) : (
-                            <>
-                              <Volume2 className="h-3 w-3" />
-                              <span>Голос</span>
-                            </>
-                          )}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const blob = new Blob([m.content], { type: "text/markdown;charset=utf-8" });
-                            const url = URL.createObjectURL(blob);
-                            const a = document.createElement("a");
-                            a.href = url;
-                            a.download = `jarvis_response_${m.id || Date.now()}.md`;
-                            document.body.appendChild(a);
-                            a.click();
-                            document.body.removeChild(a);
-                            URL.revokeObjectURL(url);
-                          }}
-                          className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300 transition"
-                          title="Скачать текст ответа в .md на компьютер"
-                        >
-                          <Download className="h-3 w-3" />
-                          <span>Скачать</span>
-                        </button>
+        <div className="flex min-h-0 flex-1 overflow-hidden">
+          <div className="flex min-w-0 flex-1 flex-col">
+            {/* Message List */}
+            <div className="flex-1 overflow-y-auto px-6 py-6">
+              <div className="mx-auto max-w-3xl space-y-5">
+                {messages.length === 0 && !activeTurn && (
+                  <div className="mt-10 space-y-6">
+                    <div className="rounded-2xl border border-zinc-800/80 bg-gradient-to-b from-zinc-900/70 to-zinc-950/70 p-8 text-center shadow-lg shadow-black/20">
+                      <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl border border-amber-500/30 bg-amber-500/10 text-amber-400">
+                        <Sparkles className="h-6 w-6" />
                       </div>
-                    )}
-                    {isUser ? (
-                      <MarkdownText content={m.content} />
-                    ) : (
-                      <MarkdownText content={m.content} />
-                    )}
-                  </div>
-                  {isUser && (
-                    <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-zinc-800 text-zinc-300">
-                      <User className="h-4 w-4" />
+                      <h3 className="text-lg font-semibold text-zinc-100">{t("chat.emptyTitle")}</h3>
+                      <p className="mt-2 text-sm text-zinc-400">{t("chat.emptySubtitle")}</p>
                     </div>
-                  )}
-                </div>
-              );
-            })}
-
-            {/* Live streaming turn */}
-            {activeTurn && (
-              <div className="flex gap-3">
-                <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-amber-500/15 text-amber-400">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                </div>
-                <div className="max-w-[85%] flex-1 rounded-2xl border border-amber-500/30 bg-zinc-900/80 px-4 py-3">
-                  <div className="mb-1.5 flex items-center gap-2 text-[11px] font-mono text-amber-400">
-                    <span>
-                      {activeTurn.provider} · {activeTurn.model}
-                    </span>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      {QUICK_START_PROMPTS.map((qp) => {
+                        const Icon = qp.icon;
+                        return (
+                          <button
+                            key={qp.id}
+                            type="button"
+                            onClick={() => void handleQuickPrompt(qp.prompt)}
+                            className="group flex items-start gap-3 rounded-xl border border-zinc-800/90 bg-zinc-900/50 p-3.5 text-left transition hover:border-amber-500/40 hover:bg-zinc-900/90"
+                          >
+                            <div className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border ${qp.color}`}>
+                              <Icon className="h-4 w-4" />
+                            </div>
+                            <div className="min-w-0">
+                              <div className="text-xs font-semibold text-zinc-100 group-hover:text-amber-300 transition">
+                                {qp.title}
+                              </div>
+                              <div className="mt-0.5 text-[11px] leading-relaxed text-zinc-400">
+                                {qp.desc}
+                              </div>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
-                  {activeTurn.tools.length > 0 && (
-                    <div className="mb-2 flex flex-wrap gap-1.5">
-                      {activeTurn.tools.map((ev, i) => (
-                        <span
-                          key={i}
-                          className="inline-flex items-center gap-1 rounded bg-zinc-800 px-2 py-0.5 font-mono text-[11px] text-zinc-300"
-                        >
-                          <Wrench className="h-3 w-3 text-amber-400" />
-                          {ev.tool_name}
+                )}
+
+                {messages.map((m) => {
+                  const isUser = m.role === "user";
+                  const isArtifactOpen = artifact?.id === m.id;
+                  return (
+                    <div key={m.id} className={`flex gap-3 ${isUser ? "justify-end" : "justify-start"}`}>
+                      {!isUser && (
+                        <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-amber-500/15 text-amber-400">
+                          <Bot className="h-4 w-4" />
+                        </div>
+                      )}
+                      <div
+                        className={`max-w-[85%] rounded-2xl px-4 py-3 ${
+                          isUser
+                            ? "bg-amber-500/15 text-zinc-100 border border-amber-500/30"
+                            : "bg-zinc-900/80 border border-zinc-800"
+                        }`}
+                      >
+                        {!isUser && (
+                          <div className="mb-2 flex flex-wrap items-center justify-between gap-2 border-b border-zinc-800/70 pb-1.5 text-[11px] font-mono text-zinc-500">
+                            <span>
+                              {m.provider || "jarvis"} · {m.model || "assistant"}
+                            </span>
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => void handleCopyText(m.id, m.content)}
+                                className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200 transition"
+                                title="Копировать текст ответа"
+                              >
+                                {copiedId === m.id ? (
+                                  <>
+                                    <Check className="h-3 w-3 text-emerald-400" />
+                                    <span className="text-emerald-400">Скопировано</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Copy className="h-3 w-3" />
+                                    <span>Копировать</span>
+                                  </>
+                                )}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setArtifact((prev) =>
+                                    prev?.id === m.id
+                                      ? null
+                                      : { id: m.id, title: extractArtifactTitle(m.content), content: m.content }
+                                  )
+                                }
+                                className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] transition ${
+                                  isArtifactOpen
+                                    ? "bg-amber-500/20 text-amber-300 font-medium"
+                                    : "text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"
+                                }`}
+                                title="Открыть в боковой панели артефакта"
+                              >
+                                <PanelRightOpen className="h-3 w-3" />
+                                <span>Панель</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void playSpeech(m.id, m.content)}
+                                title={playingMessageId === m.id ? t("chat.stopSpeech") : t("chat.playSpeech")}
+                                className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] transition ${
+                                  playingMessageId === m.id
+                                    ? "bg-amber-500/20 text-amber-300 font-medium"
+                                    : "text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300"
+                                }`}
+                              >
+                                {loadingAudioId === m.id ? (
+                                  <Loader2 className="h-3 w-3 animate-spin text-amber-400" />
+                                ) : playingMessageId === m.id ? (
+                                  <>
+                                    <Square className="h-3 w-3 fill-amber-400 text-amber-400" />
+                                    <span>{t("chat.stop")}</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Volume2 className="h-3 w-3" />
+                                    <span>Голос</span>
+                                  </>
+                                )}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const blob = new Blob([m.content], { type: "text/markdown;charset=utf-8" });
+                                  const url = URL.createObjectURL(blob);
+                                  const a = document.createElement("a");
+                                  a.href = url;
+                                  a.download = `jarvis_response_${m.id || Date.now()}.md`;
+                                  document.body.appendChild(a);
+                                  a.click();
+                                  document.body.removeChild(a);
+                                  URL.revokeObjectURL(url);
+                                }}
+                                className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300 transition"
+                                title="Скачать текст ответа в .md на компьютер"
+                              >
+                                <Download className="h-3 w-3" />
+                                <span>Скачать</span>
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                        <MarkdownText content={m.content} />
+                      </div>
+                      {isUser && (
+                        <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-zinc-800 text-zinc-300">
+                          <User className="h-4 w-4" />
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+
+                {/* Live streaming turn with Tool Timeline */}
+                {activeTurn && (
+                  <div className="flex gap-3">
+                    <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-amber-500/15 text-amber-400">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    </div>
+                    <div className="max-w-[85%] flex-1 rounded-2xl border border-amber-500/30 bg-zinc-900/80 px-4 py-3">
+                      <div className="mb-2 flex items-center justify-between gap-2 text-[11px] font-mono text-amber-400">
+                        <span>
+                          {activeTurn.provider} · {activeTurn.model}
                         </span>
-                      ))}
+                        {activeTurn.tools.length > 0 && (
+                          <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] text-amber-300">
+                            Шагов инструментов: {buildToolTimeline(activeTurn.tools).length}
+                          </span>
+                        )}
+                      </div>
+                      {activeTurn.tools.length > 0 && (
+                        <div className="mb-3 space-y-1.5 rounded-xl border border-zinc-800/90 bg-zinc-950/70 p-2.5">
+                          {buildToolTimeline(activeTurn.tools).map((step, idx) => {
+                            const isExpanded = Boolean(expandedTools[idx]);
+                            return (
+                              <div key={idx} className="rounded-lg border border-zinc-800/70 bg-zinc-900/60 text-xs">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setExpandedTools((prev) => ({ ...prev, [idx]: !prev[idx] }))
+                                  }
+                                  className="flex w-full items-center justify-between gap-2 px-2.5 py-1.5 text-left hover:bg-zinc-800/40 rounded-lg transition"
+                                >
+                                  <span className="flex items-center gap-2 font-mono text-[11px] text-zinc-200">
+                                    {step.status === "running" ? (
+                                      <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-400" />
+                                    ) : step.status === "error" ? (
+                                      <AlertCircle className="h-3.5 w-3.5 text-rose-400" />
+                                    ) : (
+                                      <Check className="h-3.5 w-3.5 text-emerald-400" />
+                                    )}
+                                    <Wrench className="h-3 w-3 text-zinc-500" />
+                                    <span>{step.name}</span>
+                                  </span>
+                                  <span className="flex items-center gap-1.5 font-mono text-[10px] text-zinc-400">
+                                    <span>
+                                      {step.status === "running"
+                                        ? "выполняется..."
+                                        : step.durationSec
+                                        ? `${step.durationSec} · ${step.status === "error" ? "ERR" : "OK"}`
+                                        : step.status === "error"
+                                        ? "ERR"
+                                        : "OK"}
+                                    </span>
+                                    {isExpanded ? (
+                                      <ChevronDown className="h-3 w-3 text-zinc-500" />
+                                    ) : (
+                                      <ChevronRight className="h-3 w-3 text-zinc-500" />
+                                    )}
+                                  </span>
+                                </button>
+                                {isExpanded && (
+                                  <div className="border-t border-zinc-800/70 px-2.5 py-2 space-y-1.5 font-mono text-[10px] text-zinc-400">
+                                    {step.argsText && (
+                                      <div>
+                                        <span className="text-zinc-500">Аргументы:</span>
+                                        <pre className="mt-0.5 max-h-28 overflow-auto whitespace-pre-wrap break-all rounded bg-zinc-950 p-1.5 text-zinc-300">
+                                          {step.argsText}
+                                        </pre>
+                                      </div>
+                                    )}
+                                    {step.resultText && (
+                                      <div>
+                                        <span className="text-zinc-500">Результат:</span>
+                                        <pre className="mt-0.5 max-h-36 overflow-auto whitespace-pre-wrap break-all rounded bg-zinc-950 p-1.5 text-zinc-300">
+                                          {step.resultText.slice(0, 1200)}
+                                        </pre>
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                      {activeTurn.text ? (
+                        <MarkdownText content={activeTurn.text} />
+                      ) : (
+                        <p className="text-sm text-zinc-400">{t("chat.thinking")}</p>
+                      )}
                     </div>
-                  )}
-                  {activeTurn.text ? (
-                    <MarkdownText content={activeTurn.text} />
-                  ) : (
-                    <p className="text-sm text-zinc-400">{t("chat.thinking")}</p>
-                  )}
-                </div>
-              </div>
-            )}
+                  </div>
+                )}
 
-            {activeError && (
-              <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-3.5 text-sm text-rose-200">
-                {activeError}
+                {activeError && (
+                  <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-3.5 text-sm text-rose-200">
+                    {activeError}
+                  </div>
+                )}
+                <div ref={bottomRef} />
               </div>
-            )}
-            <div ref={bottomRef} />
-          </div>
-        </div>
+            </div>
 
         {/* Voice Playback Banner */}
         {playingMessageId && (
@@ -1235,6 +1524,96 @@ export function ChatView({
               </button>
             )}
           </div>
+        </div>
+          </div>
+
+          {/* Right Split-View Artifact Panel (LobeChat / Cherry Studio style) */}
+          {artifact && (
+            <aside className="flex w-[44%] max-w-2xl shrink-0 flex-col border-l border-zinc-800/90 bg-zinc-900/75 backdrop-blur-md">
+              <div className="flex items-center justify-between gap-2 border-b border-zinc-800 px-4 py-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5 text-xs font-semibold text-zinc-100 truncate">
+                    <FileText className="h-3.5 w-3.5 shrink-0 text-amber-400" />
+                    <span className="truncate">{artifact.title}</span>
+                  </div>
+                  <div className="mt-0.5 text-[10px] font-mono text-zinc-500">
+                    {artifact.content.length} символов · Markdown Артефакт
+                  </div>
+                </div>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setArtifactTab(artifactTab === "preview" ? "raw" : "preview")}
+                    className="rounded-md border border-zinc-700/80 bg-zinc-800/70 px-2 py-1 text-[11px] text-zinc-300 hover:bg-zinc-700 transition"
+                  >
+                    {artifactTab === "preview" ? "Исходник" : "Превью"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleCopyText(`art_${artifact.id}`, artifact.content)}
+                    className="rounded-md border border-zinc-700/80 bg-zinc-800/70 p-1.5 text-zinc-300 hover:bg-zinc-700 transition"
+                    title="Копировать"
+                  >
+                    {copiedId === `art_${artifact.id}` ? (
+                      <Check className="h-3.5 w-3.5 text-emerald-400" />
+                    ) : (
+                      <Copy className="h-3.5 w-3.5" />
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleSaveToBrain(artifact.id, artifact.content)}
+                    disabled={savingBrainId === artifact.id}
+                    className="inline-flex items-center gap-1 rounded-md border border-amber-500/40 bg-amber-500/15 px-2 py-1 text-[11px] font-medium text-amber-300 hover:bg-amber-500/25 disabled:opacity-50 transition"
+                    title="Сохранить заметку во Второй мозг (wiki/notes)"
+                  >
+                    <Brain className="h-3.5 w-3.5" />
+                    <span>{savingBrainId === artifact.id ? "..." : "В мозг"}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const blob = new Blob([artifact.content], { type: "text/markdown;charset=utf-8" });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement("a");
+                      a.href = url;
+                      a.download = `jarvis_artifact_${artifact.id}.md`;
+                      document.body.appendChild(a);
+                      a.click();
+                      document.body.removeChild(a);
+                      URL.revokeObjectURL(url);
+                    }}
+                    className="rounded-md border border-zinc-700/80 bg-zinc-800/70 p-1.5 text-zinc-300 hover:bg-zinc-700 transition"
+                    title="Скачать .md"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setArtifact(null)}
+                    className="rounded-md p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200 transition"
+                    title="Закрыть панель"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+              {savedBrainMsg && (
+                <div className="border-b border-emerald-500/30 bg-emerald-500/10 px-4 py-1.5 text-[11px] text-emerald-300">
+                  {savedBrainMsg}
+                </div>
+              )}
+              <div className="flex-1 overflow-y-auto p-5">
+                {artifactTab === "preview" ? (
+                  <MarkdownText content={artifact.content} />
+                ) : (
+                  <pre className="whitespace-pre-wrap break-words rounded-xl border border-zinc-800 bg-zinc-950 p-4 font-mono text-xs text-zinc-300">
+                    {artifact.content}
+                  </pre>
+                )}
+              </div>
+            </aside>
+          )}
         </div>
       </section>
     </div>
