@@ -26,7 +26,8 @@ MEMORY_MAX_CHARS = 8_000
 _CHANNEL_INSTRUCTIONS: dict[str, str] = {
     "web": (
         "Channel: Web Dashboard. Markdown headings, concise bullets, code blocks, and comparison tables "
-        "are supported. Remember that session_id is available for routing background results back here."
+        "are supported. Remember that session_id is available for routing background results back here. "
+        "Always write the full, complete answer directly in your chat reply (never reply only with a `.md` filename or bare IDs, even if you also saved a note to the Second Brain)."
     ),
     "telegram": (
         "Channel: Telegram (plain text / lightweight formatting). Avoid wide Markdown tables; keep "
@@ -172,8 +173,9 @@ class PromptBuilder:
                     lines.append(
                         "You can directly check emails, list unread messages, manage calendar, check GitHub repos/issues, or create posts using available tools.\n"
                         "IMPORTANT: Never ask the user for connected_account_id or say it is missing - Jarvis automatically injects and routes the connected account ID to your tool calls.\n"
-                        "To check Gmail inbox or search emails, call `composio_gmail(action='list', query='in:inbox')` or `mcp__composio__GMAIL_LIST_MESSAGES(query='in:inbox')`.\n"
-                        "To check GitHub repositories, issues, or PRs, call `composio_github(action='repos')` or `composio_github(action='issues', repo='owner/repo')`."
+                        "To check Gmail inbox or search emails, prefer `composio_gmail(action='list', query='in:inbox')` which returns full subjects, senders, dates, and snippets.\n"
+                        "To check GitHub repositories, issues, or PRs, call `composio_github(action='repos')` or `composio_github(action='issues', repo='owner/repo')`.\n"
+                        "IMPORTANT RESPONSE RULE: Always present the full, complete answer directly inside your chat message (including email subjects, senders, dates, summaries, or task results). Never reply with only a `.md` file path or bare message IDs."
                     )
                     sections.append("\n".join(lines))
             except Exception:

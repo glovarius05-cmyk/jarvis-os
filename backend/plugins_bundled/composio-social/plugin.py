@@ -821,21 +821,105 @@ def register(ctx) -> None:
             search_query = query or "in:inbox"
             res = await _execute_composio_action(
                 api_key,
-                "GMAIL_LIST_MESSAGES",
-                {"query": search_query, "max_results": limit},
+                "GMAIL_FETCH_EMAILS",
+                {"query": search_query, "max_results": limit, "include_payload": True, "verbose": True},
                 connected_account_id=ca_id,
                 user_id=user_id,
             )
             if not res.get("success"):
                 res = await _execute_composio_action(
                     api_key,
-                    "GMAIL_FETCH_EMAILS",
+                    "GMAIL_LIST_MESSAGES",
                     {"query": search_query, "max_results": limit},
                     connected_account_id=ca_id,
                     user_id=user_id,
                 )
             if res.get("success"):
                 data = res.get("data")
+                raw_msgs = []
+                if isinstance(data, list):
+                    raw_msgs = data
+                elif isinstance(data, dict):
+                    raw_msgs = (
+                        data.get("messages")
+                        or data.get("items")
+                        or data.get("emails")
+                        or data.get("data")
+                        or []
+                    )
+                    if not isinstance(raw_msgs, list):
+                        raw_msgs = []
+
+                def _extract_msg_fields(m: dict[str, Any]) -> dict[str, str]:
+                    mid = str(m.get("messageId") or m.get("id") or "")
+                    subj = str(m.get("subject") or "")
+                    sender = str(m.get("sender") or m.get("from") or "")
+                    date = str(m.get("messageTimestamp") or m.get("date") or "")
+                    snippet = str(m.get("snippet") or "")
+                    if not snippet and isinstance(m.get("preview"), dict):
+                        snippet = str(m["preview"].get("body") or m["preview"].get("subject") or "")
+                    if not snippet:
+                        snippet = str(m.get("messageText") or "")[:240]
+                    payload = m.get("payload")
+                    if isinstance(payload, dict):
+                        for h in payload.get("headers") or []:
+                            if not isinstance(h, dict):
+                                continue
+                            hname = str(h.get("name") or "").lower()
+                            hval = str(h.get("value") or "")
+                            if hname == "subject" and not subj:
+                                subj = hval
+                            elif hname == "from" and not sender:
+                                sender = hval
+                            elif hname == "date" and not date:
+                                date = hval
+                    return {
+                        "id": mid,
+                        "subject": subj,
+                        "from": sender,
+                        "date": date,
+                        "snippet": snippet.strip()[:240],
+                    }
+
+                # Enrich bare IDs (when GMAIL_LIST_MESSAGES only returned {id, threadId})
+                enriched: list[dict[str, str]] = []
+                for item in raw_msgs[: max(1, min(limit, 10))]:
+                    if not isinstance(item, dict):
+                        continue
+                    info = _extract_msg_fields(item)
+                    if info["id"] and not info["subject"] and not info["from"] and len(enriched) < 5:
+                        det = await _execute_composio_action(
+                            api_key,
+                            "GMAIL_GET_MESSAGE",
+                            {"message_id": info["id"]},
+                            connected_account_id=ca_id,
+                            user_id=user_id,
+                            timeout=8.0,
+                        )
+                        if not det.get("success"):
+                            det = await _execute_composio_action(
+                                api_key,
+                                "GMAIL_FETCH_EMAIL",
+                                {"message_id": info["id"]},
+                                connected_account_id=ca_id,
+                                user_id=user_id,
+                                timeout=8.0,
+                            )
+                        if det.get("success") and isinstance(det.get("data"), dict):
+                            info = _extract_msg_fields(det["data"]) or info
+                    enriched.append(info)
+
+                if enriched:
+                    lines = [f"Письма Gmail по запросу '{search_query}' (показано {len(enriched)}):"]
+                    for idx, em in enumerate(enriched, 1):
+                        lines.append(
+                            f"{idx}. **{em['subject'] or '(без темы)'}**\n"
+                            f"   - От: {em['from'] or 'неизвестно'}\n"
+                            f"   - Дата: {em['date'] or 'неизвестно'}\n"
+                            f"   - ID: `{em['id']}`\n"
+                            f"   - Фрагмент: {em['snippet'] or '(пусто)'}"
+                        )
+                    return "\n".join(lines)
                 return f"Письма Gmail по запросу '{search_query}':\n{json.dumps(data, ensure_ascii=False, indent=2)}"
             return f"Не удалось получить список писем: {res.get('error')}"
 
