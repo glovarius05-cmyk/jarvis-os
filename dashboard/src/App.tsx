@@ -251,7 +251,26 @@ export function App() {
           />
         )}
         {page === "brains" && (
-          <BrainsView activeBrain={activeBrain} brains={brains} onUpdated={refreshAll} t={t} />
+          <BrainsView
+            activeBrain={activeBrain}
+            brains={brains}
+            onUpdated={refreshAll}
+            onDiscussInChat={async (notePath, noteContent) => {
+              const title = notePath.split("/").pop() || "Заметка";
+              const created = await api.createSession({ brain: activeBrain, title });
+              const prompt = `Изучи эту заметку из Второго мозга (${notePath}) и помоги с дальнейшими действиями:\n\n${noteContent.slice(0, 6000)}`;
+              sendMessage(
+                created.id,
+                prompt,
+                status?.model.main_provider ?? "openrouter",
+                status?.model.main_model ?? "openrouter/auto",
+                "full"
+              );
+              setChatRefreshTick((n) => n + 1);
+              setPage("chat");
+            }}
+            t={t}
+          />
         )}
         {page === "studio" && <StudioView />}
         {page === "models" && (

@@ -1,11 +1,32 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Brain, Cloud, Download, FileText, FolderDown, GitBranch, Network, Radio, RefreshCw, Save, Search, X } from "lucide-react";
+import {
+  Brain,
+  ChevronDown,
+  ChevronRight,
+  Cloud,
+  Download,
+  Eye,
+  FileText,
+  Folder,
+  FolderDown,
+  GitBranch,
+  MessageSquare,
+  Network,
+  Pencil,
+  Radio,
+  RefreshCw,
+  Save,
+  Search,
+  X,
+} from "lucide-react";
 import { api, type BrainItem, type BrainSearchHit, type BrainSyncStatus, type GitRemoteStatus, type GraphResponse } from "../api/client";
+import { MarkdownText } from "./MarkdownText";
 
 interface BrainsViewProps {
   activeBrain: string;
   brains: BrainItem[];
   onUpdated: () => Promise<void>;
+  onDiscussInChat?: (path: string, content: string) => void;
   t: (key: string) => string;
 }
 
@@ -21,9 +42,13 @@ const GROUP_COLORS: Record<string, string> = {
   root: "#e4e4e7",
 };
 
-export function BrainsView({ activeBrain, brains, onUpdated, t }: BrainsViewProps) {
+export function BrainsView({ activeBrain, brains, onUpdated, onDiscussInChat, t }: BrainsViewProps) {
   const [newBrain, setNewBrain] = useState("");
   const [graph, setGraph] = useState<GraphResponse | null>(null);
+  const [leftMode, setLeftMode] = useState<"tree" | "graph">("tree");
+  const [cloudFiles, setCloudFiles] = useState<Array<{ name: string; path: string; size: number; folder: string }>>([]);
+  const [collapsedFolders, setCollapsedFolders] = useState<Record<string, boolean>>({});
+  const [editorMode, setEditorMode] = useState<"edit" | "preview">("preview");
   const [selectedPath, setSelectedPath] = useState<string>("memory/MEMORY.md");
   const [editorContent, setEditorContent] = useState<string>("");
   const [savedNotice, setSavedNotice] = useState(false);
@@ -147,12 +172,26 @@ export function BrainsView({ activeBrain, brains, onUpdated, t }: BrainsViewProp
 
   const loadGraph = useCallback(async () => {
     try {
-      const g = await api.getBrainGraph();
+      const [g, cf] = await Promise.all([
+        api.getBrainGraph(),
+        api.listCloudFiles().catch(() => ({ files: [] })),
+      ]);
       setGraph(g);
+      setCloudFiles(cf.files || []);
     } catch {
       setGraph(null);
     }
   }, []);
+
+  const groupedFiles = useMemo(() => {
+    const groups: Record<string, Array<{ name: string; path: string; size: number }>> = {};
+    for (const f of cloudFiles) {
+      const folder = f.folder || (f.path.includes("/") ? f.path.split("/").slice(0, -1).join("/") : "root");
+      if (!groups[folder]) groups[folder] = [];
+      groups[folder].push({ name: f.name, path: f.path, size: f.size });
+    }
+    return Object.entries(groups).sort(([a], [b]) => a.localeCompare(b));
+  }, [cloudFiles]);
 
   const openFile = useCallback(async (relPath: string) => {
     if (relPath.startsWith("unresolved:")) return;
@@ -379,7 +418,98 @@ export function BrainsView({ activeBrain, brains, onUpdated, t }: BrainsViewProp
             </div>
           )}
 
-          <svg viewBox="0 0 520 360" className="h-80 w-full rounded-lg bg-zinc-950/90">
+          <div className="mb-2.5 flex items-center justify-between gap-2">
+            <div className="flex items-center rounded-lg border border-zinc-800 bg-zinc-950 p-0.5 text-[11px]">
+              <button
+                type="button"
+                onClick={() => setLeftMode("tree")}
+                className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 transition ${
+                  leftMode === "tree"
+                    ? "bg-amber-500/20 text-amber-300 font-medium"
+                    : "text-zinc-400 hover:text-zinc-200"
+                }`}
+              >
+                <Folder className="h-3 w-3" />
+                <span>Папки ({cloudFiles.length})</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setLeftMode("graph")}
+                className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 transition ${
+                  leftMode === "graph"
+                    ? "bg-amber-500/20 text-amber-300 font-medium"
+                    : "text-zinc-400 hover:text-zinc-200"
+                }`}
+              >
+                <Network className="h-3 w-3" />
+                <span>Граф</span>
+              </button>
+            </div>
+          </div>
+
+          {leftMode === "tree" ? (
+            <div className="h-80 space-y-1.5 overflow-y-auto rounded-lg border border-zinc-800/80 bg-zinc-950/90 p-2.5">
+              {groupedFiles.length === 0 ? (
+                <div className="py-10 text-center text-xs text-zinc-500">Файлов пока нет</div>
+              ) : (
+                groupedFiles.map(([folder, files]) => {
+                  const isCollapsed = Boolean(collapsedFolders[folder]);
+                  return (
+                    <div key={folder} className="rounded-lg border border-zinc-800/60 bg-zinc-900/40">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setCollapsedFolders((prev) => ({ ...prev, [folder]: !prev[folder] }))
+                        }
+                        className="flex w-full items-center justify-between px-2.5 py-1.5 text-left text-xs font-medium text-zinc-300 hover:bg-zinc-800/50 rounded-lg transition"
+                      >
+                        <span className="flex items-center gap-1.5 font-mono text-[11px]">
+                          {isCollapsed ? (
+                            <ChevronRight className="h-3.5 w-3.5 text-zinc-500" />
+                          ) : (
+                            <ChevronDown className="h-3.5 w-3.5 text-amber-400" />
+                          )}
+                          <Folder className="h-3.5 w-3.5 text-amber-400/80" />
+                          <span>{folder}/</span>
+                        </span>
+                        <span className="rounded bg-zinc-800 px-1.5 py-0.5 font-mono text-[10px] text-zinc-400">
+                          {files.length}
+                        </span>
+                      </button>
+                      {!isCollapsed && (
+                        <div className="space-y-0.5 px-2 pb-1.5">
+                          {files.map((f) => {
+                            const active = selectedPath === f.path;
+                            return (
+                              <button
+                                key={f.path}
+                                type="button"
+                                onClick={() => void openFile(f.path)}
+                                className={`flex w-full items-center justify-between gap-2 rounded-md px-2 py-1 text-left text-[11px] transition ${
+                                  active
+                                    ? "bg-amber-500/15 text-amber-300 font-medium"
+                                    : "text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-100"
+                                }`}
+                              >
+                                <span className="flex min-w-0 items-center gap-1.5 truncate font-mono">
+                                  <FileText className="h-3 w-3 shrink-0 text-sky-400" />
+                                  <span className="truncate">{f.name}</span>
+                                </span>
+                                <span className="shrink-0 font-mono text-[10px] text-zinc-600">
+                                  {(f.size / 1024).toFixed(1)}k
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          ) : (
+            <svg viewBox="0 0 520 360" className="h-80 w-full rounded-lg bg-zinc-950/90">
             {(graph?.edges ?? []).map((e, idx) => {
               const a = layout[e.source];
               const b = layout[e.target];
@@ -428,6 +558,7 @@ export function BrainsView({ activeBrain, brains, onUpdated, t }: BrainsViewProp
               );
             })}
           </svg>
+          )}
         </section>
 
         <section className="flex flex-col rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
@@ -476,7 +607,44 @@ export function BrainsView({ activeBrain, brains, onUpdated, t }: BrainsViewProp
                 </button>
               </div>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <div className="flex items-center rounded-lg border border-zinc-800 bg-zinc-950 p-0.5 text-[11px]">
+                <button
+                  type="button"
+                  onClick={() => setEditorMode("preview")}
+                  className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 transition ${
+                    editorMode === "preview"
+                      ? "bg-amber-500/20 text-amber-300 font-medium"
+                      : "text-zinc-400 hover:text-zinc-200"
+                  }`}
+                >
+                  <Eye className="h-3 w-3" />
+                  <span>Превью</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditorMode("edit")}
+                  className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 transition ${
+                    editorMode === "edit"
+                      ? "bg-amber-500/20 text-amber-300 font-medium"
+                      : "text-zinc-400 hover:text-zinc-200"
+                  }`}
+                >
+                  <Pencil className="h-3 w-3" />
+                  <span>Редактор</span>
+                </button>
+              </div>
+              {onDiscussInChat && (
+                <button
+                  type="button"
+                  onClick={() => onDiscussInChat(selectedPath, editorContent)}
+                  className="inline-flex items-center gap-1 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-300 hover:bg-emerald-500/20 transition"
+                  title="Обсудить этот документ с Jarvis в чате"
+                >
+                  <MessageSquare className="h-3.5 w-3.5" />
+                  <span>В чат</span>
+                </button>
+              )}
               <a
                 href={api.getBrainRawUrl(selectedPath, true)}
                 download={selectedPath.split("/").pop() || "file.md"}
@@ -484,7 +652,7 @@ export function BrainsView({ activeBrain, brains, onUpdated, t }: BrainsViewProp
                 title="Скачать этот файл из облака VPS на компьютер"
               >
                 <Download className="h-3.5 w-3.5 text-sky-400" />
-                <span>Скачать файл</span>
+                <span>Скачать</span>
               </a>
               <button
                 onClick={() => void handleSaveFile()}
@@ -536,11 +704,17 @@ export function BrainsView({ activeBrain, brains, onUpdated, t }: BrainsViewProp
               </button>
             </div>
           )}
-          <textarea
-            value={editorContent}
-            onChange={(e) => setEditorContent(e.target.value)}
-            className="h-80 w-full flex-1 resize-none rounded-lg border border-zinc-800 bg-zinc-950 p-3 font-mono text-xs leading-relaxed text-zinc-200 outline-none focus:border-amber-500"
-          />
+          {editorMode === "preview" ? (
+            <div className="h-80 w-full flex-1 overflow-y-auto rounded-lg border border-zinc-800 bg-zinc-950 p-4">
+              <MarkdownText content={editorContent || "_Пустой файл_"} />
+            </div>
+          ) : (
+            <textarea
+              value={editorContent}
+              onChange={(e) => setEditorContent(e.target.value)}
+              className="h-80 w-full flex-1 resize-none rounded-lg border border-zinc-800 bg-zinc-950 p-3 font-mono text-xs leading-relaxed text-zinc-200 outline-none focus:border-amber-500"
+            />
+          )}
         </section>
       </div>
 
