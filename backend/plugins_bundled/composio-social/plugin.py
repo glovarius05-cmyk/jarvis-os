@@ -17,7 +17,7 @@ from typing import Any
 
 import httpx
 
-from app.api.routes.hub import extract_app_slug, extract_user_identifier, parse_composio_json
+from app.api.routes.hub import extract_app_slug, extract_user_identifier, parse_composio_json, parse_mcp_rpc_response
 
 COMPOSIO_API_BASE = "https://backend.composio.dev/api/v3.1"
 
@@ -100,15 +100,15 @@ async def _execute_composio_action(
 
     if api_key.startswith("ck"):
         headers_variants = [
-            {"x-consumer-api-key": api_key, "Content-Type": "application/json", "Accept": "application/json"},
-            {"x-api-key": api_key, "Content-Type": "application/json", "Accept": "application/json"},
-            {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "Accept": "application/json"},
+            {"x-consumer-api-key": api_key, "Content-Type": "application/json", "Accept": "application/json, text/event-stream"},
+            {"x-api-key": api_key, "Content-Type": "application/json", "Accept": "application/json, text/event-stream"},
+            {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "Accept": "application/json, text/event-stream"},
         ]
     else:
         headers_variants = [
-            {"x-api-key": api_key, "Content-Type": "application/json", "Accept": "application/json"},
-            {"x-consumer-api-key": api_key, "Content-Type": "application/json", "Accept": "application/json"},
-            {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "Accept": "application/json"},
+            {"x-api-key": api_key, "Content-Type": "application/json", "Accept": "application/json, text/event-stream"},
+            {"x-consumer-api-key": api_key, "Content-Type": "application/json", "Accept": "application/json, text/event-stream"},
+            {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "Accept": "application/json, text/event-stream"},
         ]
 
     payloads: list[dict[str, Any]] = []
@@ -156,7 +156,7 @@ async def _execute_composio_action(
                 async with httpx.AsyncClient(timeout=timeout) as client:
                     res = await client.post("https://connect.composio.dev/mcp", headers=headers, json=rpc_payload)
                     if res.status_code == 200:
-                        data = res.json().get("result", {})
+                        data = parse_mcp_rpc_response(res).get("result", {})
                         raw_text = ""
                         if isinstance(data, dict):
                             if data.get("isError"):
@@ -246,7 +246,7 @@ async def _execute_composio_action(
                 async with httpx.AsyncClient(timeout=timeout) as client:
                     res = await client.post("https://connect.composio.dev/mcp", headers=headers, json=rpc_payload)
                     if res.status_code == 200:
-                        data = res.json().get("result", {})
+                        data = parse_mcp_rpc_response(res).get("result", {})
                         raw_text = ""
                         if isinstance(data, dict):
                             if data.get("isError"):
@@ -371,13 +371,13 @@ async def _get_connected_apps(ctx, api_key: str) -> dict[str, dict[str, Any]]:
     check_toolkits = ["gmail", "googlecalendar", "googlesheets", "github", "notion", "twitter", "linkedin", "instagram"]
     mcp_headers_variants = (
         [
-            {"x-consumer-api-key": api_key, "Content-Type": "application/json"},
-            {"x-api-key": api_key, "Content-Type": "application/json"},
+            {"x-consumer-api-key": api_key, "Content-Type": "application/json", "Accept": "application/json, text/event-stream"},
+            {"x-api-key": api_key, "Content-Type": "application/json", "Accept": "application/json, text/event-stream"},
         ]
         if api_key.startswith("ck")
         else [
-            {"x-api-key": api_key, "Content-Type": "application/json"},
-            {"x-consumer-api-key": api_key, "Content-Type": "application/json"},
+            {"x-api-key": api_key, "Content-Type": "application/json", "Accept": "application/json, text/event-stream"},
+            {"x-consumer-api-key": api_key, "Content-Type": "application/json", "Accept": "application/json, text/event-stream"},
         ]
     )
     for hdrs in mcp_headers_variants:
@@ -397,7 +397,7 @@ async def _get_connected_apps(ctx, api_key: str) -> dict[str, dict[str, Any]]:
                     headers=hdrs,
                 )
                 if call_res.status_code == 200:
-                    payload = call_res.json().get("result", {})
+                    payload = parse_mcp_rpc_response(call_res).get("result", {})
                     raw_text = ""
                     if isinstance(payload, dict):
                         content = payload.get("content", [])
@@ -636,13 +636,13 @@ def register(ctx) -> None:
         auth_url = ""
         mcp_headers = (
             [
-                {"x-consumer-api-key": api_key, "Content-Type": "application/json"},
-                {"x-api-key": api_key, "Content-Type": "application/json"},
+                {"x-consumer-api-key": api_key, "Content-Type": "application/json", "Accept": "application/json, text/event-stream"},
+                {"x-api-key": api_key, "Content-Type": "application/json", "Accept": "application/json, text/event-stream"},
             ]
             if api_key.startswith("ck")
             else [
-                {"x-api-key": api_key, "Content-Type": "application/json"},
-                {"x-consumer-api-key": api_key, "Content-Type": "application/json"},
+                {"x-api-key": api_key, "Content-Type": "application/json", "Accept": "application/json, text/event-stream"},
+                {"x-consumer-api-key": api_key, "Content-Type": "application/json", "Accept": "application/json, text/event-stream"},
             ]
         )
         for hdrs in mcp_headers:
@@ -663,7 +663,7 @@ def register(ctx) -> None:
                             headers=hdrs,
                         )
                         if call_res.status_code == 200:
-                            data = call_res.json().get("result", {})
+                            data = parse_mcp_rpc_response(call_res).get("result", {})
                             raw_str = ""
                             if isinstance(data, dict):
                                 content = data.get("content", [])

@@ -385,6 +385,24 @@ def parse_composio_json(raw: str) -> dict[str, Any]:
     return {}
 
 
+def parse_mcp_rpc_response(resp: Any) -> dict[str, Any]:
+    """Decode JSON-RPC response from either plain JSON or SSE (`data: ...`) HTTP MCP response."""
+    try:
+        text = (getattr(resp, "text", "") or "").strip()
+        if "data: " in text:
+            for line in text.splitlines():
+                if line.startswith("data: "):
+                    candidate = line[6:].strip()
+                    if candidate.startswith("{"):
+                        data = json.loads(candidate)
+                        if isinstance(data, dict):
+                            return data
+        data = resp.json()
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
 def extract_user_identifier(it: Any) -> str:
     """Extract username, email, or account alias from account dictionary."""
     em = extract_email_from_obj(it)
@@ -545,11 +563,11 @@ async def get_composio_status(container: AppContainer = Depends(get_container)) 
     # 1. Direct MCP check on connect.composio.dev/mcp
     mcp_headers_to_try = []
     if key.lower().startswith("ck"):
-        mcp_headers_to_try.append({"x-consumer-api-key": key, "Content-Type": "application/json"})
-        mcp_headers_to_try.append({"x-api-key": key, "Content-Type": "application/json"})
+        mcp_headers_to_try.append({"x-consumer-api-key": key, "Content-Type": "application/json", "Accept": "application/json, text/event-stream"})
+        mcp_headers_to_try.append({"x-api-key": key, "Content-Type": "application/json", "Accept": "application/json, text/event-stream"})
     else:
-        mcp_headers_to_try.append({"x-api-key": key, "Content-Type": "application/json"})
-        mcp_headers_to_try.append({"x-consumer-api-key": key, "Content-Type": "application/json"})
+        mcp_headers_to_try.append({"x-api-key": key, "Content-Type": "application/json", "Accept": "application/json, text/event-stream"})
+        mcp_headers_to_try.append({"x-consumer-api-key": key, "Content-Type": "application/json", "Accept": "application/json, text/event-stream"})
 
     check_toolkits = [
         "gmail",
@@ -576,10 +594,12 @@ async def get_composio_status(container: AppContainer = Depends(get_container)) 
                     headers=m_hdrs,
                 )
                 if list_res.status_code == 200:
-                    mcp_succeeded = True
-                    active_mcp_headers = m_hdrs
-                    tools_list = list_res.json().get("result", {}).get("tools", [])
-                    mcp_tool_count = len(tools_list)
+                    list_rpc = parse_mcp_rpc_response(list_res)
+                    if list_rpc:
+                        mcp_succeeded = True
+                        active_mcp_headers = m_hdrs
+                        tools_list = list_rpc.get("result", {}).get("tools", [])
+                        mcp_tool_count = len(tools_list)
 
                     # B. Check exact connection status for toolkits via COMPOSIO_MANAGE_CONNECTIONS
                     call_res = await client.post(
@@ -596,7 +616,7 @@ async def get_composio_status(container: AppContainer = Depends(get_container)) 
                         headers=m_hdrs,
                     )
                     if call_res.status_code == 200:
-                        call_payload = call_res.json().get("result", {})
+                        call_payload = parse_mcp_rpc_response(call_res).get("result", {})
                         raw_json_str = ""
                         if isinstance(call_payload, dict):
                             content = call_payload.get("content", [])
@@ -911,11 +931,11 @@ async def initiate_composio_connect(
     # 1. Try Composio MCP connection tool directly on connect.composio.dev/mcp or via hub
     mcp_headers_to_try = []
     if key.lower().startswith("ck"):
-        mcp_headers_to_try.append({"x-consumer-api-key": key, "Content-Type": "application/json"})
-        mcp_headers_to_try.append({"x-api-key": key, "Content-Type": "application/json"})
+        mcp_headers_to_try.append({"x-consumer-api-key": key, "Content-Type": "application/json", "Accept": "application/json, text/event-stream"})
+        mcp_headers_to_try.append({"x-api-key": key, "Content-Type": "application/json", "Accept": "application/json, text/event-stream"})
     else:
-        mcp_headers_to_try.append({"x-api-key": key, "Content-Type": "application/json"})
-        mcp_headers_to_try.append({"x-consumer-api-key": key, "Content-Type": "application/json"})
+        mcp_headers_to_try.append({"x-api-key": key, "Content-Type": "application/json", "Accept": "application/json, text/event-stream"})
+        mcp_headers_to_try.append({"x-consumer-api-key": key, "Content-Type": "application/json", "Accept": "application/json, text/event-stream"})
 
     for m_hdrs in mcp_headers_to_try:
         for reinit in (True, False):
@@ -935,7 +955,7 @@ async def initiate_composio_connect(
                         headers=m_hdrs,
                     )
                     if call_res.status_code == 200:
-                        data = call_res.json().get("result", {})
+                        data = parse_mcp_rpc_response(call_res).get("result", {})
                         raw_str = ""
                         if isinstance(data, dict):
                             content = data.get("content", [])
