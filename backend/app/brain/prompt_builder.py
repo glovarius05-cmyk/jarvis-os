@@ -175,6 +175,7 @@ class PromptBuilder:
                         "IMPORTANT: Never ask the user for connected_account_id or say it is missing - Jarvis automatically injects and routes the connected account ID to your tool calls.\n"
                         "To check Gmail inbox or search emails, prefer `composio_gmail(action='list', query='in:inbox')` which returns full subjects, senders, dates, and snippets.\n"
                         "To check GitHub repositories, issues, or PRs, call `composio_github(action='repos')` or `composio_github(action='issues', repo='owner/repo')`.\n"
+                        "For other connected services (Google Photos, Google Drive, Google Docs, Google Sheets, Zoom, Slack, Stripe, Airtable, Cloudflare, WhatsApp, Notion, Hugging Face, eBay, Context7), call `composio_feed(platform='...')` or discover/run any tool via `composio_search(app='...')` + `composio_action(app='...', action_name='...', arguments={...})`.\n"
                         "IMPORTANT RESPONSE RULE: Always present the full, complete answer directly inside your chat message (including email subjects, senders, dates, summaries, or task results). Never reply with only a `.md` file path or bare message IDs."
                     )
                     sections.append("\n".join(lines))

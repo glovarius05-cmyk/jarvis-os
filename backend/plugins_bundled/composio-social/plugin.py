@@ -1308,10 +1308,11 @@ def register(ctx) -> None:
         return f"Неизвестное действие GitHub: {action}. Доступны: profile, repos, issues, pulls, create_issue, star."
 
     async def composio_feed(args: dict, _brain: str) -> str:
-        platform = str(args.get("platform") or "").strip().lower()
-        if not platform:
-            return "ERROR: 'platform' parameter is required (e.g. twitter, linkedin, instagram, gmail, calendar, github)."
+        raw_platform = str(args.get("platform") or "").strip().lower()
+        if not raw_platform:
+            return "ERROR: 'platform' parameter is required (e.g. googlephotos, googledrive, twitter, linkedin, instagram, gmail, calendar, github, zoom, slack, stripe)."
 
+        platform = extract_app_slug(raw_platform) or raw_platform
         query = str(args.get("query") or "").strip()
         limit = int(args.get("limit") or 10)
 
@@ -1330,16 +1331,218 @@ def register(ctx) -> None:
         acc_info = accounts.get(platform, {})
         ca_id = acc_info.get("id")
         user_id = acc_info.get("user_id")
+        if not ca_id or not str(ca_id).startswith("ca_"):
+            settings_svc = ctx.services.get("settings")
+            if settings_svc is not None:
+                try:
+                    c_ids = settings_svc.load().get("composio_account_ids") or {}
+                    if c_ids.get(platform):
+                        ca_id = c_ids[platform]
+                except Exception:
+                    pass
 
-        action_name = "TWITTER_USER_TIMELINE" if platform in {"twitter", "x"} else f"{platform.upper()}_GET_FEED"
-        exec_payload: dict[str, Any] = {"limit": limit}
-        if query:
-            exec_payload["query"] = query
+        feed_candidates: dict[str, list[tuple[str, dict[str, Any]]]] = {
+            "googlephotos": [
+                ("GOOGLEPHOTOS_LIST_MEDIA_ITEMS", {"pageSize": limit}),
+                ("GOOGLEPHOTOS_SEARCH_MEDIA_ITEMS", {"pageSize": limit}),
+                ("GOOGLEPHOTOS_LIST_ALBUMS", {"pageSize": limit}),
+            ],
+            "googledrive": [
+                ("GOOGLEDRIVE_LIST_FILES", {"pageSize": limit, **({"q": query} if query else {})}),
+                ("GOOGLEDRIVE_FIND_FILE", {"q": query} if query else {}),
+            ],
+            "googledocs": [
+                ("GOOGLEDOCS_SEARCH_DOCUMENTS", {"query": query} if query else {}),
+                ("GOOGLEDRIVE_LIST_FILES", {"q": "mimeType='application/vnd.google-apps.document'", "pageSize": limit}),
+            ],
+            "googlesheets": [
+                ("GOOGLEDRIVE_LIST_FILES", {"q": "mimeType='application/vnd.google-apps.spreadsheet'", "pageSize": limit}),
+            ],
+            "zoom": [
+                ("ZOOM_LIST_MEETINGS", {"page_size": limit}),
+            ],
+            "slack": [
+                ("SLACK_LIST_ALL_CHANNELS", {"limit": limit}),
+                ("SLACK_FETCH_CONVERSATION_HISTORY", {"limit": limit}),
+            ],
+            "airtable": [
+                ("AIRTABLE_LIST_BASES", {}),
+            ],
+            "notion": [
+                ("NOTION_SEARCH_NOTION_PAGE", {"query": query} if query else {}),
+            ],
+            "stripe": [
+                ("STRIPE_LIST_CUSTOMERS", {"limit": limit}),
+            ],
+            "cloudflare": [
+                ("CLOUDFLARE_LIST_ZONES", {}),
+            ],
+            "whatsapp": [
+                ("WHATSAPP_GET_MESSAGES", {}),
+            ],
+            "huggingface": [
+                ("HUGGINGFACE_LIST_MODELS", {"limit": limit, **({"search": query} if query else {})}),
+            ],
+            "twitter": [
+                ("TWITTER_USER_TIMELINE", {"limit": limit, **({"query": query} if query else {})}),
+            ],
+        }
+
+        candidates = feed_candidates.get(platform) or [
+            (f"{platform.upper()}_LIST_ITEMS", {"limit": limit}),
+            (f"{platform.upper()}_GET_FEED", {"limit": limit}),
+        ]
+
+        last_err = ""
+        res: dict[str, Any] = {"success": False}
+        for action_name, exec_payload in candidates:
+            res = await _execute_composio_action(
+                api_key,
+                action_name,
+                exec_payload,
+                connected_account_id=ca_id,
+                user_id=user_id,
+            )
+            if res.get("success"):
+                break
+            last_err = str(res.get("error") or "")
+
+        if res.get("success"):
+            resp_data = res.get("data")
+            text_repr = json.dumps(resp_data, ensure_ascii=False, indent=2)
+            hub = ctx.services.get("hub")
+            if hub is not None and len(text_repr) > 4000:
+                preview, _ = hub.shaper.shape_result(text_repr, tool_name=f"composio_feed_{platform}")
+                return preview
+            return f"Данные {platform.upper()}:\n{text_repr}"
+        return (
+            f"Не удалось получить ленту/список для {platform}: {last_err or res.get('error')}.\n"
+            f"Вызовите `composio_search(app='{platform}')` чтобы увидеть точные доступные действия, а затем `composio_action`."
+        )
+
+    async def composio_search(args: dict, _brain: str) -> str:
+        raw_app = str(args.get("app") or args.get("platform") or "").strip().lower()
+        query = str(args.get("query") or "").strip()
+        if not raw_app and not query:
+            return "ERROR: Укажите 'app' (например, googlephotos, googledrive, zoom, slack) или 'query'."
+
+        api_key = _get_api_key(ctx)
+        if not api_key:
+            return "ERROR: Composio API key is not configured."
+
+        norm_app = extract_app_slug(raw_app) if raw_app else ""
+        found_tools: list[dict[str, str]] = []
+
+        # 1. REST API tools listing (fast & complete for ak_ keys)
+        if not api_key.startswith("ck"):
+            hdrs_list = [
+                {"x-api-key": api_key, "Accept": "application/json"},
+                {"Authorization": f"Bearer {api_key}", "Accept": "application/json"},
+            ]
+            params: dict[str, Any] = {"limit": 30}
+            if norm_app:
+                params["toolkit_slug"] = norm_app
+            if query:
+                params["search"] = query
+            for hdrs in hdrs_list:
+                try:
+                    async with httpx.AsyncClient(timeout=10.0) as client:
+                        r = await client.get(f"{COMPOSIO_API_BASE}/tools", params=params, headers=hdrs)
+                        if r.status_code == 200:
+                            items = r.json().get("items") or r.json().get("data") or []
+                            for it in items:
+                                if isinstance(it, dict) and it.get("slug"):
+                                    found_tools.append({
+                                        "slug": str(it["slug"]),
+                                        "name": str(it.get("name") or ""),
+                                        "description": str(it.get("description") or "")[:140],
+                                    })
+                            if found_tools:
+                                break
+                except Exception:
+                    continue
+
+        # 2. MCP COMPOSIO_SEARCH_TOOLS fallback / primary for ck_ keys
+        if not found_tools:
+            mcp_hdrs = (
+                [{"x-consumer-api-key": api_key, "Content-Type": "application/json", "Accept": "application/json, text/event-stream"}]
+                if api_key.startswith("ck")
+                else [{"x-api-key": api_key, "Content-Type": "application/json", "Accept": "application/json, text/event-stream"}]
+            )
+            search_q = query or f"list or get items in {norm_app}"
+            for hdrs in mcp_hdrs:
+                try:
+                    async with httpx.AsyncClient(timeout=10.0) as client:
+                        r = await client.post(
+                            "https://connect.composio.dev/mcp",
+                            json={
+                                "jsonrpc": "2.0",
+                                "method": "tools/call",
+                                "params": {
+                                    "name": "COMPOSIO_SEARCH_TOOLS",
+                                    "arguments": {
+                                        "queries": [{"use_case": search_q, **({"toolkits": [norm_app]} if norm_app else {})}]
+                                    },
+                                },
+                                "id": 12,
+                            },
+                            headers=hdrs,
+                        )
+                        if r.status_code == 200:
+                            payload = parse_mcp_rpc_response(r).get("result", {})
+                            raw_str = ""
+                            if isinstance(payload, dict):
+                                content = payload.get("content", [])
+                                if isinstance(content, list) and content:
+                                    raw_str = content[0].get("text", "")
+                            if raw_str:
+                                return f"Найденные инструменты Composio ({norm_app or query}):\n{raw_str[:4000]}"
+                except Exception:
+                    continue
+
+        if found_tools:
+            lines = [f"Доступные действия Composio для `{norm_app or query}` ({len(found_tools)}):"]
+            for t in found_tools[:25]:
+                lines.append(f"- `{t['slug']}`: {t['description']}")
+            lines.append("\nДля запуска используйте `composio_action(app='...', action_name='...', arguments={...})`.")
+            return "\n".join(lines)
+
+        return f"Не удалось найти инструменты для '{norm_app or query}'."
+
+    async def composio_action(args: dict, _brain: str) -> str:
+        raw_app = str(args.get("app") or args.get("platform") or "").strip().lower()
+        action_name = str(args.get("action_name") or args.get("tool_name") or "").strip()
+        arguments = args.get("arguments")
+        if not isinstance(arguments, dict):
+            arguments = {}
+
+        if not action_name:
+            return "ERROR: 'action_name' обязателен (например, GOOGLEPHOTOS_LIST_MEDIA_ITEMS)."
+
+        api_key = _get_api_key(ctx)
+        if not api_key:
+            return "ERROR: Composio API key is not configured."
+
+        # Infer app from action_name prefix if omitted (e.g. GOOGLEPHOTOS_... -> googlephotos)
+        app_slug = extract_app_slug(raw_app) if raw_app else extract_app_slug(action_name.split("_")[0])
+        accounts = await _get_connected_apps(ctx, api_key)
+        acc_info = accounts.get(app_slug, {})
+        ca_id = acc_info.get("id")
+        user_id = acc_info.get("user_id")
+        if not ca_id or not str(ca_id).startswith("ca_"):
+            settings_svc = ctx.services.get("settings")
+            if settings_svc is not None:
+                try:
+                    c_ids = settings_svc.load().get("composio_account_ids") or {}
+                    if c_ids.get(app_slug):
+                        ca_id = c_ids[app_slug]
+                except Exception:
+                    pass
 
         res = await _execute_composio_action(
             api_key,
             action_name,
-            exec_payload,
+            arguments,
             connected_account_id=ca_id,
             user_id=user_id,
         )
@@ -1348,10 +1551,10 @@ def register(ctx) -> None:
             text_repr = json.dumps(resp_data, ensure_ascii=False, indent=2)
             hub = ctx.services.get("hub")
             if hub is not None and len(text_repr) > 4000:
-                preview, _ = hub.shaper.shape_result(text_repr, tool_name=f"composio_feed_{platform}")
+                preview, _ = hub.shaper.shape_result(text_repr, tool_name=f"composio_{action_name}")
                 return preview
-            return f"Feed for {platform.upper()}:\n{text_repr}"
-        return f"Failed to fetch feed for {platform}: {res.get('error')}"
+            return f"Результат `{action_name}`:\n{text_repr}"
+        return f"Ошибка выполнения `{action_name}`: {res.get('error')}"
 
     async def composio_post(args: dict, _brain: str) -> str:
         platform = str(args.get("platform") or "").strip().lower()
@@ -1564,7 +1767,7 @@ def register(ctx) -> None:
 
     ctx.register_tool(
         name="composio_feed",
-        description="Fetch recent posts, timeline, mentions, or emails/calendar events from a connected integration.",
+        description="Fetch recent items, files, photos, messages, meetings, or posts from ANY connected Composio integration (googlephotos, googledrive, googledocs, googlesheets, zoom, slack, stripe, airtable, cloudflare, whatsapp, notion, gmail, calendar, github, twitter, etc.).",
         handler=composio_feed,
         min_mode="readonly",
         schema={
@@ -1572,7 +1775,7 @@ def register(ctx) -> None:
             "properties": {
                 "platform": {
                     "type": "string",
-                    "description": "Platform: twitter, linkedin, instagram, threads, facebook, gmail, calendar, github",
+                    "description": "Platform slug: googlephotos, googledrive, googledocs, googlesheets, zoom, slack, stripe, airtable, cloudflare, whatsapp, huggingface, notion, gmail, calendar, github, twitter, linkedin",
                 },
                 "limit": {
                     "type": "integer",
@@ -1585,6 +1788,51 @@ def register(ctx) -> None:
                 },
             },
             "required": ["platform"],
+        },
+    )
+
+    ctx.register_tool(
+        name="composio_search",
+        description="Discover available Composio actions/tool slugs for any connected app (e.g. googlephotos, googledrive, zoom, slack, stripe, airtable, cloudflare, whatsapp, ebay, huggingface).",
+        handler=composio_search,
+        min_mode="readonly",
+        schema={
+            "type": "object",
+            "properties": {
+                "app": {
+                    "type": "string",
+                    "description": "Toolkit/app slug (e.g. googlephotos, googledrive, zoom, slack, stripe, notion)",
+                },
+                "query": {
+                    "type": "string",
+                    "description": "Optional search keyword (e.g. 'list photos', 'create meeting', 'send message')",
+                },
+            },
+        },
+    )
+
+    ctx.register_tool(
+        name="composio_action",
+        description="Execute ANY Composio action/tool on a connected app (automatically injects connected_account_id). Use composio_search first if you need exact action_name.",
+        handler=composio_action,
+        min_mode="safe",
+        schema={
+            "type": "object",
+            "properties": {
+                "app": {
+                    "type": "string",
+                    "description": "App slug (e.g. googlephotos, googledrive, zoom, slack, stripe, airtable)",
+                },
+                "action_name": {
+                    "type": "string",
+                    "description": "Exact Composio action slug (e.g. GOOGLEPHOTOS_LIST_MEDIA_ITEMS, GOOGLEDRIVE_LIST_FILES, ZOOM_LIST_MEETINGS)",
+                },
+                "arguments": {
+                    "type": "object",
+                    "description": "JSON arguments object for the action",
+                },
+            },
+            "required": ["action_name"],
         },
     )
 
