@@ -985,6 +985,16 @@ def register(ctx) -> None:
         ca_id = cal_info.get("id")
         user_id = cal_info.get("user_id")
 
+        if not ca_id or not str(ca_id).startswith("ca_"):
+            settings_svc = ctx.services.get("settings")
+            if settings_svc is not None:
+                try:
+                    c_ids = settings_svc.load().get("composio_account_ids") or {}
+                    if c_ids.get("googlecalendar"):
+                        ca_id = c_ids["googlecalendar"]
+                except Exception:
+                    pass
+
         if action in ("list", "events", "upcoming"):
             time_min = str(args.get("time_min") or "").strip()
             params: dict[str, Any] = {"max_results": limit}
