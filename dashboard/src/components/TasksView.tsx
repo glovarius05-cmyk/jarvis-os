@@ -1,5 +1,20 @@
 import { useCallback, useEffect, useState } from "react";
-import { Bell, Check, Clock, ListChecks, Play, Plus, Repeat, Trash2, X } from "lucide-react";
+import {
+  Bell,
+  Check,
+  Clock,
+  Columns3,
+  Copy,
+  FileText,
+  LayoutList,
+  ListChecks,
+  Loader2,
+  Play,
+  Plus,
+  Repeat,
+  Trash2,
+  X,
+} from "lucide-react";
 import {
   api,
   type InboxItemInfo,
@@ -7,6 +22,7 @@ import {
   type LoopInfo,
   type ReminderInfo,
 } from "../api/client";
+import { MarkdownText } from "./MarkdownText";
 
 type WorkTab = "kanban" | "loops" | "reminders" | "inbox";
 
@@ -33,6 +49,9 @@ export function TasksView() {
   const [remPrompt, setRemPrompt] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [kanbanLayout, setKanbanLayout] = useState<"board" | "list">("board");
+  const [selectedTask, setSelectedTask] = useState<KanbanTaskInfo | null>(null);
+  const [copiedTask, setCopiedTask] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -187,13 +206,13 @@ export function TasksView() {
       {tab === "kanban" && (
         <div className="space-y-5">
           <form onSubmit={handleAddTask} className="space-y-2.5 rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <input
                 value={taskTitle}
                 onChange={(e) => setTaskTitle(e.target.value)}
                 placeholder="Assign a goal to Jarvis..."
                 required
-                className="flex-1 rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-sm text-zinc-100"
+                className="flex-1 min-w-[220px] rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-sm text-zinc-100"
               />
               <button
                 type="submit"
@@ -201,6 +220,34 @@ export function TasksView() {
               >
                 <Plus className="h-3.5 w-3.5" /> Add Task
               </button>
+              <div className="flex items-center rounded-lg border border-zinc-800 bg-zinc-950 p-0.5">
+                <button
+                  type="button"
+                  onClick={() => setKanbanLayout("board")}
+                  className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs transition ${
+                    kanbanLayout === "board"
+                      ? "bg-amber-500/20 text-amber-300 font-medium"
+                      : "text-zinc-400 hover:text-zinc-200"
+                  }`}
+                  title="Вид колонок Канбана"
+                >
+                  <Columns3 className="h-3.5 w-3.5" />
+                  <span>Колонки</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setKanbanLayout("list")}
+                  className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs transition ${
+                    kanbanLayout === "list"
+                      ? "bg-amber-500/20 text-amber-300 font-medium"
+                      : "text-zinc-400 hover:text-zinc-200"
+                  }`}
+                  title="Вид списком"
+                >
+                  <LayoutList className="h-3.5 w-3.5" />
+                  <span>Список</span>
+                </button>
+              </div>
             </div>
             <input
               value={taskDesc}
@@ -210,7 +257,162 @@ export function TasksView() {
             />
           </form>
 
-          <div className="space-y-2.5">
+          {kanbanLayout === "board" ? (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+              {[
+                {
+                  key: "ready",
+                  title: "В очереди",
+                  dot: "bg-zinc-400",
+                  items: tasks.filter((t) => t.status === "ready" || t.status === "triage"),
+                },
+                {
+                  key: "running",
+                  title: "В работе",
+                  dot: "bg-amber-400 animate-pulse",
+                  items: tasks.filter((t) => t.status === "running"),
+                },
+                {
+                  key: "blocked",
+                  title: "Ожидает / Проверка",
+                  dot: "bg-rose-400",
+                  items: tasks.filter((t) => t.status === "blocked" || t.status === "review"),
+                },
+                {
+                  key: "done",
+                  title: "Готово",
+                  dot: "bg-emerald-400",
+                  items: tasks.filter((t) => t.status === "done"),
+                },
+              ].map((col) => (
+                <div
+                  key={col.key}
+                  className="flex min-h-[260px] flex-col rounded-2xl border border-zinc-800/80 bg-zinc-900/40 p-3"
+                >
+                  <div className="mb-3 flex items-center justify-between border-b border-zinc-800/80 pb-2">
+                    <span className="flex items-center gap-2 text-xs font-semibold text-zinc-200">
+                      <span className={`h-2 w-2 rounded-full ${col.dot}`} />
+                      {col.title}
+                    </span>
+                    <span className="rounded-full bg-zinc-800 px-2 py-0.5 font-mono text-[10px] text-zinc-400">
+                      {col.items.length}
+                    </span>
+                  </div>
+                  <div className="flex-1 space-y-2.5 overflow-y-auto">
+                    {col.items.length === 0 ? (
+                      <div className="rounded-xl border border-dashed border-zinc-800/80 py-8 text-center text-[11px] text-zinc-600">
+                        Пусто
+                      </div>
+                    ) : (
+                      col.items.map((task) => (
+                        <div
+                          key={task.id}
+                          className="space-y-2 rounded-xl border border-zinc-800/90 bg-zinc-950/70 p-3 transition hover:border-zinc-700"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <h4 className="text-xs font-semibold leading-snug text-zinc-100">{task.title}</h4>
+                            {task.status !== "done" && task.status !== "cancelled" && (
+                              <button
+                                onClick={() => void api.cancelTask(task.id).then(refresh)}
+                                className="shrink-0 rounded p-0.5 text-zinc-500 hover:bg-zinc-800 hover:text-rose-400"
+                                title="Отменить задачу"
+                              >
+                                <X className="h-3.5 w-3.5" />
+                              </button>
+                            )}
+                          </div>
+                          <div className="flex flex-wrap items-center gap-1.5 font-mono text-[10px] text-zinc-500">
+                            <span>{task.id}</span>
+                            <span>·</span>
+                            <span>попыток: {task.attempts}</span>
+                          </div>
+                          {task.block_reason && (
+                            <p className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-2 text-[11px] text-amber-300 line-clamp-3">
+                              {task.block_reason}
+                            </p>
+                          )}
+                          {task.status === "blocked" && (
+                            <div className="space-y-1.5">
+                              <input
+                                value={answers[task.id] ?? ""}
+                                onChange={(e) => setAnswers((p) => ({ ...p, [task.id]: e.target.value }))}
+                                placeholder="Ответьте для разблокировки..."
+                                className="w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-[11px] text-zinc-100"
+                              />
+                              <div className="flex gap-1.5">
+                                <button
+                                  onClick={() =>
+                                    void api.answerTask(task.id, answers[task.id] ?? "").then(() => {
+                                      setAnswers((p) => ({ ...p, [task.id]: "" }));
+                                      return refresh();
+                                    })
+                                  }
+                                  className="flex-1 rounded bg-amber-500 px-2 py-1 text-[11px] font-medium text-zinc-950 hover:bg-amber-400"
+                                >
+                                  Answer
+                                </button>
+                                <button
+                                  onClick={() =>
+                                    void api.answerTask(task.id, "Retry task execution").then(() => {
+                                      setAnswers((p) => ({ ...p, [task.id]: "" }));
+                                      return refresh();
+                                    })
+                                  }
+                                  className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-[11px] text-amber-300 hover:bg-amber-500/20"
+                                >
+                                  Повторить
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                          {task.result && (
+                            <p className="line-clamp-3 rounded-lg bg-zinc-900/70 p-2 text-[11px] text-zinc-400">
+                              {task.result}
+                            </p>
+                          )}
+                          <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                            {task.status === "ready" && (
+                              <button
+                                onClick={() => void handleRunTask(task.id)}
+                                disabled={busyId === task.id}
+                                className="inline-flex items-center gap-1 rounded-lg bg-amber-500 px-2.5 py-1 text-[11px] font-medium text-zinc-950 hover:bg-amber-400 disabled:opacity-50"
+                              >
+                                {busyId === task.id ? (
+                                  <Loader2 className="h-3 w-3 animate-spin" />
+                                ) : (
+                                  <Play className="h-3 w-3" />
+                                )}
+                                <span>Run</span>
+                              </button>
+                            )}
+                            {task.status === "review" && (
+                              <button
+                                onClick={() => void api.acceptTask(task.id).then(refresh)}
+                                className="inline-flex items-center gap-1 rounded-lg bg-emerald-500/20 px-2.5 py-1 text-[11px] text-emerald-300 hover:bg-emerald-500/30"
+                              >
+                                <Check className="h-3 w-3" /> Accept
+                              </button>
+                            )}
+                            {task.result && (
+                              <button
+                                type="button"
+                                onClick={() => setSelectedTask(task)}
+                                className="ml-auto inline-flex items-center gap-1 rounded-lg border border-zinc-700/80 bg-zinc-900 px-2.5 py-1 text-[11px] text-zinc-300 hover:border-amber-500/40 hover:text-amber-300 transition"
+                              >
+                                <FileText className="h-3 w-3" />
+                                <span>Отчёт</span>
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="space-y-2.5">
             {tasks.map((task) => (
               <div key={task.id} className="space-y-2 rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -295,7 +497,8 @@ export function TasksView() {
                 )}
               </div>
             ))}
-          </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -471,6 +674,59 @@ export function TasksView() {
               </div>
             ))
           )}
+        </div>
+      )}
+
+      {selectedTask && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 p-4 backdrop-blur-sm"
+          onClick={() => setSelectedTask(null)}
+        >
+          <div
+            className="flex max-h-[85vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-zinc-700/80 bg-zinc-900 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-3 border-b border-zinc-800 px-5 py-3.5">
+              <div className="min-w-0">
+                <h3 className="truncate text-sm font-semibold text-zinc-100">{selectedTask.title}</h3>
+                <p className="mt-0.5 font-mono text-[11px] text-zinc-500">
+                  {selectedTask.id} · status={selectedTask.status} · attempts={selectedTask.attempts}
+                </p>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(selectedTask.result || "");
+                      setCopiedTask(true);
+                      window.setTimeout(() => setCopiedTask(false), 1800);
+                    } catch {}
+                  }}
+                  className="inline-flex items-center gap-1 rounded-lg border border-zinc-700 bg-zinc-800 px-2.5 py-1 text-xs text-zinc-200 hover:bg-zinc-700"
+                >
+                  {copiedTask ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+                  <span>{copiedTask ? "Скопировано" : "Копировать"}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedTask(null)}
+                  className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-y-auto p-5">
+              {selectedTask.description && (
+                <div className="mb-4 rounded-xl border border-zinc-800 bg-zinc-950/60 p-3 text-xs text-zinc-400">
+                  <span className="font-semibold text-zinc-300">Описание: </span>
+                  {selectedTask.description}
+                </div>
+              )}
+              <MarkdownText content={selectedTask.result || "(Пусто)"} />
+            </div>
+          </div>
         </div>
       )}
     </div>

@@ -10,6 +10,7 @@ import {
   Plug,
   Plus,
   RefreshCw,
+  Search,
   Share2,
   Shield,
   Sparkles,
@@ -24,32 +25,32 @@ import {
   type MCPConnectionInfo,
 } from "../api/client";
 
-const SOCIAL_PLATFORMS = [
-  { id: "gmail", name: "Gmail", desc: "Read, search, draft, and send emails via Composio" },
-  { id: "googlecalendar", name: "Google Calendar", desc: "View events, schedule meetings, and manage reminders" },
-  { id: "github", name: "GitHub", desc: "Manage repos, issues, pull requests, and releases" },
-  { id: "googledocs", name: "Google Docs", desc: "Create, read, and edit documents" },
-  { id: "googlesheets", name: "Google Sheets", desc: "Read, update, and analyze spreadsheets" },
-  { id: "googledrive", name: "Google Drive", desc: "Search, upload, and organize files and folders" },
-  { id: "googlephotos", name: "Google Photos", desc: "Browse albums, photos, and media library" },
-  { id: "googleanalytics", name: "Google Analytics", desc: "Traffic reports, metrics, and property analytics" },
-  { id: "zoom", name: "Zoom", desc: "Schedule meetings, list recordings, and manage calls" },
-  { id: "slack", name: "Slack", desc: "Send messages, read channels, and manage workspaces" },
-  { id: "whatsapp", name: "WhatsApp", desc: "Send and read WhatsApp messages and chats" },
-  { id: "airtable", name: "Airtable", desc: "Query bases, update records, and manage tables" },
-  { id: "notion", name: "Notion", desc: "Read and write pages, databases, and notes" },
-  { id: "stripe", name: "Stripe", desc: "Payments, customers, invoices, and subscriptions" },
-  { id: "cloudflare", name: "Cloudflare", desc: "DNS records, zones, Workers, and security rules" },
-  { id: "context7", name: "Context7", desc: "Up-to-date library docs and code context lookup" },
-  { id: "ebay", name: "eBay", desc: "Listings, orders, inventory, and marketplace search" },
-  { id: "huggingface", name: "Hugging Face", desc: "Models, datasets, Spaces, and inference API" },
-  { id: "twitter", name: "Twitter / X", desc: "Short updates, threads, mentions (280 chars)" },
-  { id: "linkedin", name: "LinkedIn", desc: "Professional articles, company updates (3k chars)" },
-  { id: "instagram", name: "Instagram", desc: "Captions, media posts, analytics (2.2k chars)" },
-  { id: "threads", name: "Threads", desc: "Micro-blogging updates (500 chars)" },
-  { id: "facebook", name: "Facebook", desc: "Pages, feeds, audience engagement" },
-  { id: "youtube", name: "YouTube", desc: "Video descriptions, community updates" },
-  { id: "reddit", name: "Reddit", desc: "Subreddit posts, discussions" },
+const SOCIAL_PLATFORMS: Array<{ id: string; name: string; desc: string; cat: "google" | "dev" | "comms" | "social" }> = [
+  { id: "gmail", name: "Gmail", desc: "Read, search, draft, and send emails via Composio", cat: "google" },
+  { id: "googlecalendar", name: "Google Calendar", desc: "View events, schedule meetings, and manage reminders", cat: "google" },
+  { id: "github", name: "GitHub", desc: "Manage repos, issues, pull requests, and releases", cat: "dev" },
+  { id: "googledocs", name: "Google Docs", desc: "Create, read, and edit documents", cat: "google" },
+  { id: "googlesheets", name: "Google Sheets", desc: "Read, update, and analyze spreadsheets", cat: "google" },
+  { id: "googledrive", name: "Google Drive", desc: "Search, upload, and organize files and folders", cat: "google" },
+  { id: "googlephotos", name: "Google Photos", desc: "Browse albums, photos, and media library", cat: "google" },
+  { id: "googleanalytics", name: "Google Analytics", desc: "Traffic reports, metrics, and property analytics", cat: "google" },
+  { id: "zoom", name: "Zoom", desc: "Schedule meetings, list recordings, and manage calls", cat: "comms" },
+  { id: "slack", name: "Slack", desc: "Send messages, read channels, and manage workspaces", cat: "comms" },
+  { id: "whatsapp", name: "WhatsApp", desc: "Send and read WhatsApp messages and chats", cat: "comms" },
+  { id: "airtable", name: "Airtable", desc: "Query bases, update records, and manage tables", cat: "dev" },
+  { id: "notion", name: "Notion", desc: "Read and write pages, databases, and notes", cat: "dev" },
+  { id: "stripe", name: "Stripe", desc: "Payments, customers, invoices, and subscriptions", cat: "dev" },
+  { id: "cloudflare", name: "Cloudflare", desc: "DNS records, zones, Workers, and security rules", cat: "dev" },
+  { id: "context7", name: "Context7", desc: "Up-to-date library docs and code context lookup", cat: "dev" },
+  { id: "ebay", name: "eBay", desc: "Listings, orders, inventory, and marketplace search", cat: "social" },
+  { id: "huggingface", name: "Hugging Face", desc: "Models, datasets, Spaces, and inference API", cat: "dev" },
+  { id: "twitter", name: "Twitter / X", desc: "Short updates, threads, mentions (280 chars)", cat: "social" },
+  { id: "linkedin", name: "LinkedIn", desc: "Professional articles, company updates (3k chars)", cat: "social" },
+  { id: "instagram", name: "Instagram", desc: "Captions, media posts, analytics (2.2k chars)", cat: "social" },
+  { id: "threads", name: "Threads", desc: "Micro-blogging updates (500 chars)", cat: "social" },
+  { id: "facebook", name: "Facebook", desc: "Pages, feeds, audience engagement", cat: "social" },
+  { id: "youtube", name: "YouTube", desc: "Video descriptions, community updates", cat: "social" },
+  { id: "reddit", name: "Reddit", desc: "Subreddit posts, discussions", cat: "social" },
 ];
 
 const normalizePlatformSlug = (slug: string) => {
@@ -132,6 +133,8 @@ export function ConnectionsView() {
   } | null>(null);
   const [copiedConfig, setCopiedConfig] = useState(false);
   const [configTarget, setConfigTarget] = useState<"cursor" | "claude">("cursor");
+  const [platformSearch, setPlatformSearch] = useState("");
+  const [platformFilter, setPlatformFilter] = useState<"all" | "connected" | "google" | "dev" | "comms" | "social">("all");
 
   const refreshComposio = useCallback(async () => {
     setComposioLoading(true);
@@ -628,9 +631,60 @@ export function ConnectionsView() {
           </div>
         )}
 
+        {/* Platform Search & Filters */}
+        <div className="flex flex-wrap items-center justify-between gap-2.5 pt-1">
+          <div className="relative flex-1 min-w-[200px]">
+            <Search className="pointer-events-none absolute left-2.5 top-2 h-3.5 w-3.5 text-zinc-500" />
+            <input
+              type="text"
+              value={platformSearch}
+              onChange={(e) => setPlatformSearch(e.target.value)}
+              placeholder="Поиск сервиса (Gmail, GitHub, Zoom, Stripe...)"
+              className="w-full rounded-lg border border-zinc-800 bg-zinc-950 py-1.5 pl-8 pr-3 text-xs text-zinc-100 placeholder:text-zinc-500 focus:border-sky-500 focus:outline-none"
+            />
+          </div>
+          <div className="flex flex-wrap items-center gap-1">
+            {[
+              { id: "all", label: "Все" },
+              { id: "connected", label: "Подключённые" },
+              { id: "google", label: "Google" },
+              { id: "dev", label: "Dev & Cloud" },
+              { id: "comms", label: "Мессенджеры" },
+              { id: "social", label: "Соцсети" },
+            ].map((f) => (
+              <button
+                key={f.id}
+                type="button"
+                onClick={() => setPlatformFilter(f.id as typeof platformFilter)}
+                className={`rounded-lg px-2.5 py-1 text-[11px] font-medium transition ${
+                  platformFilter === f.id
+                    ? "bg-sky-500/20 text-sky-300 border border-sky-500/40"
+                    : "border border-zinc-800 bg-zinc-950/70 text-zinc-400 hover:text-zinc-200"
+                }`}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
         {/* Platform Grid */}
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {SOCIAL_PLATFORMS.map((platform) => {
+          {SOCIAL_PLATFORMS.filter((platform) => {
+            const matchingAcc = composioAccounts.find((acc) => {
+              const accSlug = normalizePlatformSlug(acc.app);
+              const targetSlug = normalizePlatformSlug(platform.id);
+              const isActive = !acc.status || ["ACTIVE", "CONNECTED", "READY", "ENABLED"].includes(acc.status.toUpperCase());
+              return accSlug === targetSlug && isActive;
+            });
+            const q = platformSearch.trim().toLowerCase();
+            if (q && !platform.name.toLowerCase().includes(q) && !platform.desc.toLowerCase().includes(q) && !platform.id.includes(q)) {
+              return false;
+            }
+            if (platformFilter === "connected") return Boolean(matchingAcc);
+            if (platformFilter !== "all" && platform.cat !== platformFilter) return false;
+            return true;
+          }).map((platform) => {
             const matchingAcc = composioAccounts.find((acc) => {
               const accSlug = normalizePlatformSlug(acc.app);
               const targetSlug = normalizePlatformSlug(platform.id);
