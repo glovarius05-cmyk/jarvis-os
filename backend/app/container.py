@@ -217,8 +217,13 @@ class AppContainer:
             hub=hub,
             workflows=workflow_runner,
             inbox=inbox,
+            vaults=vault_manager,
             engine_override=engine_override,
         )
+        try:
+            kanban.sync_done_tasks_to_vault()
+        except Exception:
+            pass
         loops = LoopRunner(
             vaults=vault_manager,
             router=engine_router,

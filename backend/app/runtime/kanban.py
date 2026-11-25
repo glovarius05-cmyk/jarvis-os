@@ -18,13 +18,16 @@ import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from app.engines.base import EngineProtocol, EngineRequest
 from app.engines.router import EngineRouter
 from app.hub.gateway import MCPHubGateway
 from app.runtime.inbox import InboxStore
 from app.runtime.workflows import WorkflowRunner
+
+if TYPE_CHECKING:
+    from app.brain.vault import VaultManager
 
 VALID_STATUSES = frozenset({"triage", "ready", "running", "review", "blocked", "done", "cancelled"})
 LEASE_SECONDS = 120.0
@@ -90,6 +93,7 @@ class KanbanRuntime:
         hub: MCPHubGateway,
         workflows: WorkflowRunner,
         inbox: InboxStore,
+        vaults: VaultManager | None = None,
         engine_override: EngineProtocol | None = None,
     ) -> None:
         self._db_path = state_dir / "kanban.sqlite3"
@@ -98,6 +102,7 @@ class KanbanRuntime:
         self._hub = hub
         self._workflows = workflows
         self._inbox = inbox
+        self._vaults = vaults
         self._engine_override = engine_override
         self._lock = threading.RLock()
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -231,7 +236,10 @@ class KanbanRuntime:
                 "UPDATE tasks SET status='done', block_reason='', updated_at=? WHERE id = ?",
                 (time.time(), task_id),
             )
-        return self.get_task(task_id)  # type: ignore[return-value]
+        updated = self.get_task(task_id)
+        if updated is not None and (updated.result or "").strip():
+            self._save_task_to_vault(updated)
+        return updated  # type: ignore[return-value]
 
     def cancel_task(self, task_id: str, reason: str = "") -> KanbanTask:
         task = self.get_task(task_id)
@@ -409,7 +417,15 @@ class KanbanRuntime:
                     (final_status, worker_out, block_reason, time.time(), task.id),
                 )
 
+            saved_rel_path = ""
+            if passed and worker_out.strip():
+                updated_task = self.get_task(task.id)
+                if updated_task is not None:
+                    saved_rel_path = self._save_task_to_vault(updated_task)
+
             summary_body = worker_out if passed else f"Needs review ({block_reason}):\n\n{worker_out}"
+            if saved_rel_path:
+                summary_body = f"{summary_body}\n\n---\nSaved to Second Brain: `{saved_rel_path}`"
             await self._inbox.deliver(
                 brain=task.brain,
                 source="kanban",
@@ -444,6 +460,58 @@ class KanbanRuntime:
                 await self.execute_task(claimed.id)
                 executed.append(claimed.id)
         return executed
+
+    @staticmethod
+    def _task_vault_rel_path(task: KanbanTask) -> str:
+        """Build a deterministic wiki/tasks/<id>-<slug>.md path inside the brain."""
+        raw_slug = re.sub(r"[^\w\s-]", "", task.title.lower(), flags=re.UNICODE)
+        slug = re.sub(r"[\s_-]+", "-", raw_slug).strip("-")[:60]
+        filename = f"{task.id}-{slug}.md" if slug else f"{task.id}.md"
+        return f"wiki/tasks/{filename}"
+
+    def _save_task_to_vault(self, task: KanbanTask) -> str:
+        """Persist a completed Kanban task report into Second Brain (`wiki/tasks/`)."""
+        if self._vaults is None or not (task.result or "").strip():
+            return ""
+        rel_path = self._task_vault_rel_path(task)
+        try:
+            completed_iso = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(task.updated_at or time.time()))
+            lines = [
+                f"# {task.title}",
+                "",
+                f"- **Task ID:** `{task.id}`",
+                f"- **Status:** `{task.status}`",
+                f"- **Completed:** {completed_iso}",
+            ]
+            if task.description.strip():
+                lines.extend(["", "## Description", "", task.description.strip()])
+            lines.extend(["", "## Result", "", task.result.strip(), ""])
+            self._vaults.write_text(task.brain, rel_path, "\n".join(lines))
+            return rel_path
+        except Exception:  # noqa: BLE001
+            return ""
+
+    def sync_done_tasks_to_vault(self, brain: str | None = None) -> list[str]:
+        """Backfill already-completed Kanban tasks that are not yet saved in `wiki/tasks/`."""
+        if self._vaults is None:
+            return []
+        saved: list[str] = []
+        for task in self.list_tasks(brain=brain, limit=200):
+            if task.status != "done" or not (task.result or "").strip():
+                continue
+            rel_path = self._task_vault_rel_path(task)
+            try:
+                root = self._vaults.brain_path(task.brain)
+                tasks_dir = root / "wiki" / "tasks"
+                already_exists = tasks_dir.exists() and any(tasks_dir.glob(f"{task.id}*.md"))
+                if already_exists:
+                    continue
+            except Exception:  # noqa: BLE001
+                continue
+            written = self._save_task_to_vault(task)
+            if written:
+                saved.append(written)
+        return saved
 
     @staticmethod
     def _parse_acceptance(raw: str) -> tuple[bool, str]:

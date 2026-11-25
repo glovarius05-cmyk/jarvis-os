@@ -82,6 +82,20 @@ async def test_kanban_needs_input_answer_acceptance_and_chat_delivery(
     assert len(chat_msgs) == 2
     assert "Completed plan with budget $500" in chat_msgs[-1].content
 
+    # Completed task report was automatically saved into Second Brain (wiki/tasks/)
+    tasks_dir = ctr.vaults.brain_path("Brain Default") / "wiki" / "tasks"
+    saved_files = list(tasks_dir.glob(f"{task.id}*.md"))
+    assert len(saved_files) == 1
+    saved_md = saved_files[0].read_text(encoding="utf-8")
+    assert "Prepare ad plan" in saved_md
+    assert "Completed plan with budget $500" in saved_md
+
+    # Removing the file and calling sync_done_tasks_to_vault() backfills it
+    saved_files[0].unlink()
+    backfilled = ctr.kanban.sync_done_tasks_to_vault("Brain Default")
+    assert len(backfilled) == 1
+    assert len(list(tasks_dir.glob(f"{task.id}*.md"))) == 1
+
 
 @pytest.mark.asyncio
 async def test_multi_loop_circuit_breaker_and_reminders_preconditions(
