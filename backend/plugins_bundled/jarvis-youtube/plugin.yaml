@@ -1,0 +1,9 @@
+name: YouTube Transcript
+slug: jarvis-youtube
+version: 1.0.0
+description: Extract video metadata and full captions/transcript from any YouTube URL for summarization.
+enabled: true
+min_mode: readonly
+tools:
+  - jarvis_youtube
+hooks: []

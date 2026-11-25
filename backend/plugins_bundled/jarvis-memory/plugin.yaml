@@ -1,0 +1,10 @@
+name: Persistent Memory
+slug: jarvis-memory
+version: 1.0.0
+description: Save durable facts/rules and recall knowledge via Hybrid Search and Core Memory.
+enabled: true
+min_mode: readonly
+tools:
+  - jarvis_memory_save
+  - jarvis_memory_recall
+hooks: []

@@ -1,0 +1,9 @@
+name: Inbox & Channel Notifier
+slug: jarvis-notify
+version: 1.0.0
+description: Deliver notifications to Jarvis Inbox and linked Telegram channel.
+enabled: true
+min_mode: safe
+tools:
+  - jarvis_notify
+hooks: []
