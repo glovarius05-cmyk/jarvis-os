@@ -28,7 +28,21 @@ const SOCIAL_PLATFORMS = [
   { id: "gmail", name: "Gmail", desc: "Read, search, draft, and send emails via Composio" },
   { id: "googlecalendar", name: "Google Calendar", desc: "View events, schedule meetings, and manage reminders" },
   { id: "github", name: "GitHub", desc: "Manage repos, issues, pull requests, and releases" },
+  { id: "googledocs", name: "Google Docs", desc: "Create, read, and edit documents" },
+  { id: "googlesheets", name: "Google Sheets", desc: "Read, update, and analyze spreadsheets" },
+  { id: "googledrive", name: "Google Drive", desc: "Search, upload, and organize files and folders" },
+  { id: "googlephotos", name: "Google Photos", desc: "Browse albums, photos, and media library" },
+  { id: "googleanalytics", name: "Google Analytics", desc: "Traffic reports, metrics, and property analytics" },
+  { id: "zoom", name: "Zoom", desc: "Schedule meetings, list recordings, and manage calls" },
+  { id: "slack", name: "Slack", desc: "Send messages, read channels, and manage workspaces" },
+  { id: "whatsapp", name: "WhatsApp", desc: "Send and read WhatsApp messages and chats" },
+  { id: "airtable", name: "Airtable", desc: "Query bases, update records, and manage tables" },
   { id: "notion", name: "Notion", desc: "Read and write pages, databases, and notes" },
+  { id: "stripe", name: "Stripe", desc: "Payments, customers, invoices, and subscriptions" },
+  { id: "cloudflare", name: "Cloudflare", desc: "DNS records, zones, Workers, and security rules" },
+  { id: "context7", name: "Context7", desc: "Up-to-date library docs and code context lookup" },
+  { id: "ebay", name: "eBay", desc: "Listings, orders, inventory, and marketplace search" },
+  { id: "huggingface", name: "Hugging Face", desc: "Models, datasets, Spaces, and inference API" },
   { id: "twitter", name: "Twitter / X", desc: "Short updates, threads, mentions (280 chars)" },
   { id: "linkedin", name: "LinkedIn", desc: "Professional articles, company updates (3k chars)" },
   { id: "instagram", name: "Instagram", desc: "Captions, media posts, analytics (2.2k chars)" },
@@ -43,6 +57,10 @@ const normalizePlatformSlug = (slug: string) => {
   if (s === "x" || s === "twitter") return "twitter";
   if (s === "calendar" || s === "gcal" || s === "googlecalendar") return "googlecalendar";
   if (s === "sheets" || s === "gsheets" || s === "googlesheets") return "googlesheets";
+  if (s === "docs" || s === "gdocs" || s === "googledocs") return "googledocs";
+  if (s === "drive" || s === "gdrive" || s === "googledrive") return "googledrive";
+  if (s === "photos" || s === "gphotos" || s === "googlephotos") return "googlephotos";
+  if (s === "analytics" || s === "ganalytics" || s === "googleanalytics") return "googleanalytics";
   if (s === "googlemail" || s === "gmail") return "gmail";
   return s;
 };

@@ -363,25 +363,39 @@ class MCPClientPool:
             if conn.id == "composio":
                 upper_name = tool_name.upper()
                 target_slug = ""
-                for slug in (
+                known_slugs = (
                     "gmail",
                     "googlecalendar",
                     "googlesheets",
+                    "googledocs",
+                    "googledrive",
+                    "googlephotos",
+                    "googleanalytics",
                     "github",
                     "notion",
+                    "slack",
+                    "zoom",
+                    "airtable",
+                    "stripe",
+                    "cloudflare",
+                    "whatsapp",
+                    "context7",
+                    "ebay",
+                    "huggingface",
                     "twitter",
                     "linkedin",
                     "instagram",
                     "facebook",
                     "youtube",
                     "reddit",
-                ):
+                )
+                for slug in known_slugs:
                     if slug.upper() in upper_name or (slug == "twitter" and "TWITTER" in upper_name):
                         target_slug = slug
                         break
                 if not target_slug and "action_name" in call_args:
                     act = str(call_args["action_name"]).upper()
-                    for slug in ("gmail", "googlecalendar", "googlesheets", "github", "notion", "twitter", "linkedin"):
+                    for slug in known_slugs:
                         if slug.upper() in act:
                             target_slug = slug
                             break

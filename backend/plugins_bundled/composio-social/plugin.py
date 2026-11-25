@@ -368,7 +368,29 @@ async def _get_connected_apps(ctx, api_key: str) -> dict[str, dict[str, Any]]:
                     continue
 
     # 3. Direct MCP call to connect.composio.dev/mcp
-    check_toolkits = ["gmail", "googlecalendar", "googlesheets", "github", "notion", "twitter", "linkedin", "instagram"]
+    check_toolkits = [
+        "gmail",
+        "googlecalendar",
+        "googlesheets",
+        "googledocs",
+        "googledrive",
+        "googlephotos",
+        "googleanalytics",
+        "github",
+        "notion",
+        "slack",
+        "zoom",
+        "airtable",
+        "stripe",
+        "cloudflare",
+        "whatsapp",
+        "context7",
+        "ebay",
+        "huggingface",
+        "twitter",
+        "linkedin",
+        "instagram",
+    ]
     mcp_headers_variants = (
         [
             {"x-consumer-api-key": api_key, "Content-Type": "application/json", "Accept": "application/json, text/event-stream"},

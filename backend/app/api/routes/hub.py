@@ -297,26 +297,38 @@ def extract_app_slug(item: Any) -> str:
         return "googlecalendar"
     if any(k in s_clean for k in ("sheet", "gsheet", "googlesheet")):
         return "googlesheets"
+    if any(k in s_clean for k in ("googledoc", "gdoc")):
+        return "googledocs"
+    if any(k in s_clean for k in ("googledrive", "gdrive")):
+        return "googledrive"
+    if any(k in s_clean for k in ("googlephoto", "gphoto")):
+        return "googlephotos"
+    if any(k in s_clean for k in ("googleanalytic", "ganalytics")):
+        return "googleanalytics"
     if any(k in s_clean for k in ("gmail", "googlemail")):
         return "gmail"
     if any(k in s_clean for k in ("twitter", "tweet")) or s_clean == "x":
         return "twitter"
-    if "github" in s_clean:
-        return "github"
-    if "notion" in s_clean:
-        return "notion"
-    if "linkedin" in s_clean:
-        return "linkedin"
-    if "instagram" in s_clean:
-        return "instagram"
-    if "facebook" in s_clean:
-        return "facebook"
-    if "youtube" in s_clean:
-        return "youtube"
-    if "reddit" in s_clean:
-        return "reddit"
-    if "slack" in s_clean:
-        return "slack"
+    for known in (
+        "github",
+        "notion",
+        "linkedin",
+        "instagram",
+        "facebook",
+        "youtube",
+        "reddit",
+        "slack",
+        "zoom",
+        "airtable",
+        "stripe",
+        "cloudflare",
+        "whatsapp",
+        "context7",
+        "ebay",
+        "huggingface",
+    ):
+        if known in s_clean:
+            return known
     return s_clean or s
 
 
@@ -573,8 +585,21 @@ async def get_composio_status(container: AppContainer = Depends(get_container)) 
         "gmail",
         "googlecalendar",
         "googlesheets",
+        "googledocs",
+        "googledrive",
+        "googlephotos",
+        "googleanalytics",
         "github",
         "notion",
+        "slack",
+        "zoom",
+        "airtable",
+        "stripe",
+        "cloudflare",
+        "whatsapp",
+        "context7",
+        "ebay",
+        "huggingface",
         "twitter",
         "linkedin",
         "instagram",
