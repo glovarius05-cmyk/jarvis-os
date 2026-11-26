@@ -13,6 +13,7 @@ import {
   FileSpreadsheet,
   FileText,
   GitBranch,
+  History,
   Image as ImageIcon,
   Loader2,
   Mail,
@@ -203,6 +204,7 @@ export function ChatView({
 }: ChatViewProps) {
   const [sessions, setSessions] = useState<SessionItem[]>([]);
   const [selectedId, setSelectedId] = useState<string>("");
+  const [mobileSessionsOpen, setMobileSessionsOpen] = useState(false);
   const [messages, setMessages] = useState<MessageItem[]>([]);
   const [draft, setDraft] = useState("");
   const [provider, setProvider] = useState(defaultProvider);
@@ -799,17 +801,44 @@ export function ChatView({
   const isCustomModel = !isKnown && model !== "";
 
   return (
-    <div className="flex h-screen overflow-hidden">
+    <div className="flex h-full min-h-0 flex-1 overflow-hidden">
+      {/* Mobile Sessions Backdrop */}
+      {mobileSessionsOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-black/60 backdrop-blur-xs md:hidden"
+          onClick={() => setMobileSessionsOpen(false)}
+        />
+      )}
+
       {/* Sessions Sidebar */}
-      <aside className="hidden md:flex w-72 flex-col border-r border-zinc-800 bg-zinc-900/40">
+      <aside
+        className={`${
+          mobileSessionsOpen
+            ? "fixed inset-y-0 left-0 z-50 flex w-72 bg-zinc-900/95 backdrop-blur-md"
+            : "hidden md:flex w-72 bg-zinc-900/40"
+        } flex-col border-r border-zinc-800`}
+      >
         <div className="space-y-2 border-b border-zinc-800 p-3">
-          <button
-            onClick={handleNewChat}
-            className="flex w-full items-center justify-center gap-2 rounded-lg bg-amber-500 px-3 py-2 text-sm font-medium text-zinc-950 transition hover:bg-amber-400"
-          >
-            <Plus className="h-4 w-4" />
-            <span>{t("chat.new")}</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                setMobileSessionsOpen(false);
+                void handleNewChat();
+              }}
+              className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-amber-500 px-3 py-2 text-sm font-medium text-zinc-950 transition hover:bg-amber-400"
+            >
+              <Plus className="h-4 w-4" />
+              <span>{t("chat.new")}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setMobileSessionsOpen(false)}
+              className="rounded-lg border border-zinc-800 p-2 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200 md:hidden"
+              aria-label="Закрыть историю чатов"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
           <div className="relative">
             <Search className="pointer-events-none absolute left-2.5 top-2.5 h-3.5 w-3.5 text-zinc-500" />
             <input
@@ -830,6 +859,7 @@ export function ChatView({
                   onClick={() => {
                     setSelectedId(h.session_id);
                     setSearchQuery("");
+                    setMobileSessionsOpen(false);
                   }}
                   className="w-full rounded-lg border border-zinc-800/80 bg-zinc-900/70 p-2 text-left hover:border-amber-500/40"
                 >
@@ -853,7 +883,10 @@ export function ChatView({
                     }`}
                   >
                     <button
-                      onClick={() => setSelectedId(s.id)}
+                      onClick={() => {
+                        setSelectedId(s.id);
+                        setMobileSessionsOpen(false);
+                      }}
                       className="flex min-w-0 flex-1 items-center gap-2 text-left"
                     >
                       {isBusy && <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-amber-400" />}
@@ -875,10 +908,27 @@ export function ChatView({
       </aside>
 
       {/* Main Chat Area */}
-      <section className="flex flex-1 flex-col bg-zinc-950">
+      <section className="flex min-w-0 flex-1 flex-col bg-zinc-950">
         {/* Top bar with quick brain/model switcher */}
-        <header className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800 px-5 py-3">
-          <div className="flex items-center gap-2">
+        <header className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-800 px-3 py-2 sm:gap-3 sm:px-5 sm:py-3">
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5 sm:gap-2">
+            {/* Mobile Sessions Drawer & Quick New Chat */}
+            <button
+              type="button"
+              onClick={() => setMobileSessionsOpen(true)}
+              aria-label="История чатов"
+              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-zinc-800 bg-zinc-900 text-zinc-300 hover:border-amber-500/50 md:hidden"
+            >
+              <History className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleNewChat()}
+              aria-label={t("chat.new")}
+              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-amber-500 text-zinc-950 hover:bg-amber-400 md:hidden"
+            >
+              <Plus className="h-4 w-4" />
+            </button>
             {/* Unified Model Selector */}
             <select
               value={isCustomModel || model === "" ? `__custom__::${provider}` : `${provider}::${model}`}
@@ -897,7 +947,7 @@ export function ChatView({
                 }
               }}
               title="Выберите модель ИИ"
-              className="max-w-[340px] truncate rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-1.5 font-mono text-xs font-medium text-zinc-100 outline-none transition hover:border-zinc-700 focus:border-amber-500"
+              className="min-w-0 max-w-[200px] sm:max-w-[340px] flex-1 sm:flex-initial truncate rounded-lg border border-zinc-800 bg-zinc-900 px-2.5 py-1.5 font-mono text-xs font-medium text-zinc-100 outline-none transition hover:border-zinc-700 focus:border-amber-500 sm:px-3"
             >
               {selectableProviders.map((p) => {
                 const icon =
@@ -992,7 +1042,7 @@ export function ChatView({
             </select>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
             <button
               type="button"
               onClick={() => {
@@ -1003,19 +1053,19 @@ export function ChatView({
                 } catch {}
               }}
               title={autoSpeak ? "Auto-Speak enabled (Jarvis reads replies aloud)" : "Auto-Speak disabled"}
-              className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition ${
+              className={`flex items-center gap-1.5 rounded-lg border px-2 py-1.5 text-xs font-medium transition sm:px-2.5 ${
                 autoSpeak
                   ? "border-amber-500/50 bg-amber-500/15 text-amber-300"
                   : "border-zinc-800 bg-zinc-900 text-zinc-400 hover:text-zinc-200"
               }`}
             >
               <Volume2 className={`h-3.5 w-3.5 ${autoSpeak ? "text-amber-400" : "text-zinc-500"}`} />
-              <span>{t("chat.autoSpeak")}</span>
+              <span className="hidden sm:inline">{t("chat.autoSpeak")}</span>
             </button>
 
-            <span className="flex items-center gap-1.5 text-xs text-zinc-400">
+            <span className="flex items-center gap-1.5 text-xs text-zinc-400" title={wsConnected ? t("status.wsConnected") : t("status.wsReconnecting")}>
               <span className={`h-2 w-2 rounded-full ${wsConnected ? "bg-emerald-400" : "bg-amber-400"}`} />
-              {wsConnected ? t("status.wsConnected") : t("status.wsReconnecting")}
+              <span className="hidden sm:inline">{wsConnected ? t("status.wsConnected") : t("status.wsReconnecting")}</span>
             </span>
           </div>
         </header>
@@ -1023,11 +1073,11 @@ export function ChatView({
         <div className="flex min-h-0 flex-1 overflow-hidden">
           <div className="flex min-w-0 flex-1 flex-col">
             {/* Message List */}
-            <div className="flex-1 overflow-y-auto px-6 py-6">
-              <div className="mx-auto max-w-3xl space-y-5">
+            <div className="flex-1 overflow-y-auto px-3 py-4 sm:px-6 sm:py-6">
+              <div className="mx-auto max-w-3xl space-y-4 sm:space-y-5">
                 {messages.length === 0 && !activeTurn && (
-                  <div className="mt-10 space-y-6">
-                    <div className="rounded-2xl border border-zinc-800/80 bg-gradient-to-b from-zinc-900/70 to-zinc-950/70 p-8 text-center shadow-lg shadow-black/20">
+                  <div className="mt-3 space-y-4 sm:mt-10 sm:space-y-6">
+                    <div className="rounded-2xl border border-zinc-800/80 bg-gradient-to-b from-zinc-900/70 to-zinc-950/70 p-5 text-center shadow-lg shadow-black/20 sm:p-8">
                       <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl border border-amber-500/30 bg-amber-500/10 text-amber-400">
                         <Sparkles className="h-6 w-6" />
                       </div>
@@ -1066,14 +1116,14 @@ export function ChatView({
                   const isUser = m.role === "user";
                   const isArtifactOpen = artifact?.id === m.id;
                   return (
-                    <div key={m.id} className={`flex gap-3 ${isUser ? "justify-end" : "justify-start"}`}>
+                    <div key={m.id} className={`flex gap-2 sm:gap-3 ${isUser ? "justify-end" : "justify-start"}`}>
                       {!isUser && (
-                        <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-amber-500/15 text-amber-400">
+                        <div className="mt-1 hidden h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-amber-500/15 text-amber-400 sm:flex">
                           <Bot className="h-4 w-4" />
                         </div>
                       )}
                       <div
-                        className={`max-w-[85%] rounded-2xl px-4 py-3 ${
+                        className={`max-w-[94%] sm:max-w-[85%] overflow-x-hidden break-words rounded-2xl px-3.5 py-2.5 sm:px-4 sm:py-3 ${
                           isUser
                             ? "bg-amber-500/15 text-zinc-100 border border-amber-500/30"
                             : "bg-zinc-900/80 border border-zinc-800"
@@ -1414,7 +1464,7 @@ export function ChatView({
 
         {/* Composer */}
         <div
-          className={`border-t border-zinc-800 bg-zinc-950 px-6 py-4 transition-colors ${
+          className={`border-t border-zinc-800 bg-zinc-950 px-2.5 pt-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))] sm:px-6 sm:py-4 transition-colors ${
             isDragging ? "border-amber-500/60 bg-amber-500/10" : ""
           }`}
           onDragOver={handleDragOver}
@@ -1504,7 +1554,7 @@ export function ChatView({
               type="button"
               onClick={() => fileInputRef.current?.click()}
               title={t("chat.attachFiles")}
-              className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-zinc-800 bg-zinc-900 text-zinc-300 transition hover:border-amber-500 hover:text-amber-400 hover:bg-zinc-800 active:scale-95"
+              className="relative flex h-10 w-10 sm:h-11 sm:w-11 shrink-0 items-center justify-center rounded-xl border border-zinc-800 bg-zinc-900 text-zinc-300 transition hover:border-amber-500 hover:text-amber-400 hover:bg-zinc-800 active:scale-95"
             >
               <Plus className="h-5 w-5" />
               {attachedFiles.length > 0 && (
@@ -1519,7 +1569,7 @@ export function ChatView({
               type="button"
               onClick={handleMicToggle}
               title={listening ? t("chat.micStop") : t("chat.micStart")}
-              className={`relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border transition active:scale-95 ${
+              className={`relative flex h-10 w-10 sm:h-11 sm:w-11 shrink-0 items-center justify-center rounded-xl border transition active:scale-95 ${
                 listening
                   ? "border-rose-500 bg-rose-500/20 text-rose-300 shadow-lg shadow-rose-500/20"
                   : "border-zinc-800 bg-zinc-900 text-zinc-300 hover:border-amber-500 hover:text-amber-400"
@@ -1548,26 +1598,26 @@ export function ChatView({
                 }
               }}
               placeholder={t("chat.placeholder")}
-              className="flex-1 resize-none rounded-xl border border-zinc-800 bg-zinc-900 px-3.5 py-2.5 text-sm text-zinc-100 outline-none focus:border-amber-500"
+              className="min-w-0 flex-1 resize-none rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 sm:px-3.5 sm:py-2.5 text-base sm:text-sm text-zinc-100 outline-none focus:border-amber-500"
             />
 
             {/* Send or Stop Button */}
             {activeTurn ? (
               <button
                 onClick={() => onStop(selectedId)}
-                className="flex h-11 items-center gap-1.5 rounded-xl bg-rose-600 px-4 text-sm font-medium text-white hover:bg-rose-500"
+                className="flex h-10 sm:h-11 shrink-0 items-center gap-1.5 rounded-xl bg-rose-600 px-3 sm:px-4 text-sm font-medium text-white hover:bg-rose-500"
               >
                 <Square className="h-4 w-4" />
-                <span>{t("chat.stop")}</span>
+                <span className="hidden sm:inline">{t("chat.stop")}</span>
               </button>
             ) : (
               <button
                 onClick={() => void handleSubmit()}
                 disabled={!draft.trim() && attachedFiles.length === 0}
-                className="flex h-11 items-center gap-1.5 rounded-xl bg-amber-500 px-4 text-sm font-medium text-zinc-950 transition hover:bg-amber-400 disabled:opacity-40"
+                className="flex h-10 sm:h-11 shrink-0 items-center gap-1.5 rounded-xl bg-amber-500 px-3 sm:px-4 text-sm font-medium text-zinc-950 transition hover:bg-amber-400 disabled:opacity-40"
               >
                 <Send className="h-4 w-4" />
-                <span>{t("chat.send")}</span>
+                <span className="hidden sm:inline">{t("chat.send")}</span>
               </button>
             )}
           </div>

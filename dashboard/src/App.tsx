@@ -128,7 +128,7 @@ export function App() {
   const activeBrain = status?.active_brain ?? "Brain Default";
 
   return (
-    <div className="flex min-h-screen flex-col md:flex-row bg-zinc-950 text-zinc-100">
+    <div className="flex h-[100dvh] flex-col md:flex-row overflow-hidden bg-zinc-950 text-zinc-100">
       {/* Mobile top bar */}
       <header className="flex items-center justify-between border-b border-zinc-800/80 bg-zinc-900/80 px-3 py-2.5 backdrop-blur-md md:hidden">
         <div className="flex items-center gap-2.5">
@@ -293,7 +293,7 @@ export function App() {
         </div>
       </aside>
 
-      <main className="min-w-0 flex-1">
+      <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto">
         {page === "chat" && (
           <ChatView
             activeBrain={activeBrain}
