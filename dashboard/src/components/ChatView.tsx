@@ -801,7 +801,7 @@ export function ChatView({
   return (
     <div className="flex h-screen overflow-hidden">
       {/* Sessions Sidebar */}
-      <aside className="flex w-72 flex-col border-r border-zinc-800 bg-zinc-900/40">
+      <aside className="hidden md:flex w-72 flex-col border-r border-zinc-800 bg-zinc-900/40">
         <div className="space-y-2 border-b border-zinc-800 p-3">
           <button
             onClick={handleNewChat}
@@ -1576,7 +1576,7 @@ export function ChatView({
 
           {/* Right Split-View Artifact Panel (LobeChat / Cherry Studio style) */}
           {artifact && (
-            <aside className="flex w-[44%] max-w-2xl shrink-0 flex-col border-l border-zinc-800/90 bg-zinc-900/75 backdrop-blur-md">
+            <aside className="fixed inset-0 z-40 md:static md:inset-auto md:z-auto flex w-full md:w-[44%] md:max-w-2xl shrink-0 flex-col border-l border-zinc-800/90 bg-zinc-900/95 md:bg-zinc-900/75 backdrop-blur-md">
               <div className="flex items-center justify-between gap-2 border-b border-zinc-800 px-4 py-3">
                 <div className="min-w-0">
                   <div className="flex items-center gap-1.5 text-xs font-semibold text-zinc-100 truncate">

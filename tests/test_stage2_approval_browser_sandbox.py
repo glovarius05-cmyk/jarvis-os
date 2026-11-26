@@ -230,3 +230,62 @@ async def test_fenced_command_local_execution(tmp_path: Path):
     assert res.exit_code == 0
     assert "hello stage2" in res.stdout
     assert res.sandbox == "local"
+
+
+@pytest.mark.asyncio
+async def test_destructive_composio_action_triggers_approval(tmp_path: Path):
+    ctr = AppContainer.build(
+        state_dir=tmp_path / "state",
+        brains_dir=tmp_path / "brains",
+        force_login=False,
+    )
+    executed = []
+
+    from app.hub.builtin_tools import ToolDefinition
+
+    async def _fake_composio(args: dict, _brain: str) -> str:
+        executed.append(args.get("action_name"))
+        return '{"ok": true}'
+
+    ctr.hub._builtins.append(
+        ToolDefinition(
+            name="composio_action",
+            description="fake composio action",
+            parameters={"type": "object", "properties": {"action_name": {"type": "string"}}},
+            required_perm=PermLevel.FULL,
+            source="composio",
+            handler=_fake_composio,
+        )
+    )
+
+    # 1. Read-only action should execute immediately without approval even in full mode
+    read_res = await ctr.hub.call_tool(
+        brain="Brain Default",
+        name="composio_action",
+        args={"action_name": "GMAIL_FETCH_EMAILS"},
+        run_mode="full",
+        session_id="s-safe",
+    )
+    assert '"ok": true' in read_res or "ok" in read_res
+    assert executed == ["GMAIL_FETCH_EMAILS"]
+
+    # 2. Destructive action should block for human approval even though require_for_full_tools=False
+    task = asyncio.create_task(
+        ctr.hub.call_tool(
+            brain="Brain Default",
+            name="composio_action",
+            args={"action_name": "CLOUDFLARE_DELETE_DNS_RECORD"},
+            run_mode="full",
+            session_id="s-destr",
+        )
+    )
+    await asyncio.sleep(0.05)
+
+    pending = ctr.approvals.list_pending("s-destr")
+    assert len(pending) == 1
+    assert "Destructive external action" in pending[0]["reason"]
+    await ctr.approvals.resolve(pending[0]["approval_id"], approved=False)
+
+    destr_res = await task
+    assert "denied" in destr_res.lower()
+    assert executed == ["GMAIL_FETCH_EMAILS"]

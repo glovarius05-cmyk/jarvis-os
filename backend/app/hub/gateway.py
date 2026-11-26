@@ -10,10 +10,16 @@ from __future__ import annotations
 import hmac
 import json
 import os
+import re
 import secrets
 import time
 from pathlib import Path
 from typing import Any
+
+_DANGEROUS_ACTION_RE = re.compile(
+    r"(delete|remove|refund|purge|revoke|destroy|transfer|drop|terminate)",
+    re.IGNORECASE,
+)
 
 import httpx
 
@@ -272,14 +278,26 @@ class MCPHubGateway:
                     approval_cfg = {}
 
             require_for_full = bool(approval_cfg.get("require_for_full_tools", False))
+            require_for_dangerous = bool(approval_cfg.get("require_for_dangerous_actions", True))
             auto_approved = set(approval_cfg.get("auto_approve_tools", []))
             timeout_s = float(approval_cfg.get("timeout_s", 120.0))
 
             req_level = tool.required_perm if isinstance(tool.required_perm, PermLevel) else PermLevel.parse(tool.required_perm, PermLevel.FULL)
             needs_approval = False
-            if name not in auto_approved and require_for_full:
-                if req_level == PermLevel.FULL:
+            approval_reason = f"Tool '{name}' requires human confirmation (Full permission level)"
+
+            destructive_action = ""
+            if name in ("composio_action", "mcp__composio__COMPOSIO_EXECUTE_TOOL") and isinstance(args, dict):
+                act_str = str(args.get("action_name") or args.get("tool_name") or "").strip()
+                if act_str and _DANGEROUS_ACTION_RE.search(act_str):
+                    destructive_action = act_str
+
+            if name not in auto_approved:
+                if require_for_full and req_level == PermLevel.FULL:
                     needs_approval = True
+                elif require_for_dangerous and destructive_action:
+                    needs_approval = True
+                    approval_reason = f"Destructive external action '{destructive_action}' requires human confirmation"
 
             if needs_approval:
                 approved, reason_appr = await self._approval_manager.request_approval(
@@ -287,7 +305,7 @@ class MCPHubGateway:
                     brain=brain,
                     tool_name=name,
                     args=args or {},
-                    reason=f"Tool '{name}' requires human confirmation (Full permission level)",
+                    reason=approval_reason,
                     channel="web",
                     timeout_s=timeout_s,
                 )

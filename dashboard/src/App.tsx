@@ -3,6 +3,7 @@ import {
   Brain,
   Cpu,
   ListChecks,
+  Menu,
   MessageSquare,
   PanelLeftClose,
   PanelLeftOpen,
@@ -12,6 +13,7 @@ import {
   Search,
   Sparkles,
   Terminal,
+  X,
 } from "lucide-react";
 import { api, type BrainItem, type OnboardingStatus, type ProvidersResponse, type SystemStatus } from "./api/client";
 import { BrainsView } from "./components/BrainsView";
@@ -42,6 +44,7 @@ export function App() {
   const [onboardingStatus, setOnboardingStatus] = useState<OnboardingStatus | null>(null);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [cmdOpen, setCmdOpen] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
     try {
       return localStorage.getItem("jarvis_sidebar_collapsed") === "true";
@@ -125,30 +128,75 @@ export function App() {
   const activeBrain = status?.active_brain ?? "Brain Default";
 
   return (
-    <div className="flex min-h-screen bg-zinc-950 text-zinc-100">
+    <div className="flex min-h-screen flex-col md:flex-row bg-zinc-950 text-zinc-100">
+      {/* Mobile top bar */}
+      <header className="flex items-center justify-between border-b border-zinc-800/80 bg-zinc-900/80 px-3 py-2.5 backdrop-blur-md md:hidden">
+        <div className="flex items-center gap-2.5">
+          <button
+            type="button"
+            onClick={() => setMobileNavOpen(true)}
+            aria-label="Открыть меню"
+            className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-1.5 text-zinc-300 hover:bg-zinc-800"
+          >
+            <Menu className="h-5 w-5" />
+          </button>
+          <div className="flex items-center gap-2">
+            <Brain className="h-4 w-4 text-amber-400" />
+            <span className="text-sm font-semibold tracking-tight">{t("app.title")}</span>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => setCmdOpen(true)}
+          aria-label="Быстрый поиск"
+          className="rounded-lg border border-zinc-800 bg-zinc-950/70 p-1.5 text-zinc-400 hover:text-amber-300"
+        >
+          <Search className="h-4 w-4" />
+        </button>
+      </header>
+
+      {/* Mobile backdrop */}
+      {mobileNavOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-black/60 backdrop-blur-xs md:hidden"
+          onClick={() => setMobileNavOpen(false)}
+        />
+      )}
+
       <aside
-        className={`flex shrink-0 flex-col border-r border-zinc-800/80 bg-zinc-900/70 backdrop-blur-md transition-all duration-200 ${
-          sidebarCollapsed ? "w-16 p-2.5 items-center" : "w-60 p-4"
+        className={`${
+          mobileNavOpen ? "fixed inset-y-0 left-0 z-50 flex w-64 p-4" : "hidden"
+        } md:static md:z-auto md:flex shrink-0 flex-col border-r border-zinc-800/80 bg-zinc-900/95 md:bg-zinc-900/70 backdrop-blur-md transition-all duration-200 ${
+          sidebarCollapsed ? "md:w-16 md:p-2.5 md:items-center" : "md:w-60 md:p-4"
         }`}
       >
-        <div className={`mb-4 flex items-center ${sidebarCollapsed ? "justify-center" : "justify-between gap-2"}`}>
+        <div className={`mb-4 flex items-center ${sidebarCollapsed ? "md:justify-center justify-between" : "justify-between gap-2"}`}>
           <div className="flex items-center gap-2.5 min-w-0">
             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-amber-500/30 bg-amber-500/15 text-amber-400 shadow-sm shadow-amber-500/10">
               <Brain className="h-5 w-5" />
             </div>
-            {!sidebarCollapsed && (
+            {(!sidebarCollapsed || mobileNavOpen) && (
               <div className="min-w-0">
                 <h1 className="truncate text-sm font-semibold tracking-tight">{t("app.title")}</h1>
                 <p className="text-[11px] text-zinc-400">v{status?.version ?? "0.1.0"}</p>
               </div>
             )}
           </div>
+          {mobileNavOpen && (
+            <button
+              type="button"
+              onClick={() => setMobileNavOpen(false)}
+              className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200 md:hidden"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          )}
           {!sidebarCollapsed && (
             <button
               type="button"
               onClick={toggleSidebar}
               title="Свернуть боковое меню"
-              className="rounded-lg p-1.5 text-zinc-500 hover:bg-zinc-800/80 hover:text-zinc-200 transition"
+              className="hidden md:inline-flex rounded-lg p-1.5 text-zinc-500 hover:bg-zinc-800/80 hover:text-zinc-200 transition"
             >
               <PanelLeftClose className="h-4 w-4" />
             </button>
@@ -197,7 +245,10 @@ export function App() {
             return (
               <button
                 key={item.id}
-                onClick={() => setPage(item.id)}
+                onClick={() => {
+                  setPage(item.id);
+                  setMobileNavOpen(false);
+                }}
                 title={sidebarCollapsed ? item.label : undefined}
                 className={`flex items-center rounded-xl transition ${
                   sidebarCollapsed
