@@ -37,6 +37,8 @@ export function App() {
   const [brains, setBrains] = useState<BrainItem[]>([]);
   const [providersData, setProvidersData] = useState<ProvidersResponse | null>(null);
   const [chatRefreshTick, setChatRefreshTick] = useState(0);
+  const [bgRefreshTick, setBgRefreshTick] = useState(0);
+  const [inboxUnread, setInboxUnread] = useState(0);
   const [onboardingStatus, setOnboardingStatus] = useState<OnboardingStatus | null>(null);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [cmdOpen, setCmdOpen] = useState(false);
@@ -95,9 +97,17 @@ export function App() {
     void refreshAll();
   }, [refreshAll]);
 
+  useEffect(() => {
+    void api
+      .listInbox()
+      .then((res) => setInboxUnread(res.unread_count ?? 0))
+      .catch(() => {});
+  }, [bgRefreshTick]);
+
   const { connected, liveTurns, errors, pendingApprovals, resolveApproval, sendMessage, stopTurn } = useChatSocket({
     onFinal: () => setChatRefreshTick((n) => n + 1),
     onTurnStart: () => setChatRefreshTick((n) => n + 1),
+    onBackgroundUpdate: () => setBgRefreshTick((n) => n + 1),
   });
 
   const navItems: { id: PageId; label: string; icon: typeof MessageSquare }[] = [
@@ -200,7 +210,12 @@ export function App() {
                 }`}
               >
                 <Icon className="h-4 w-4 shrink-0" />
-                {!sidebarCollapsed && <span className="truncate">{item.label}</span>}
+                {!sidebarCollapsed && <span className="truncate flex-1">{item.label}</span>}
+                {!sidebarCollapsed && item.id === "tasks" && inboxUnread > 0 && (
+                  <span className="rounded-full bg-amber-500/25 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-amber-300">
+                    {inboxUnread}
+                  </span>
+                )}
               </button>
             );
           })}
@@ -277,7 +292,7 @@ export function App() {
           <ModelsView data={providersData} onUpdated={refreshAll} t={t} />
         )}
         {page === "connections" && <ConnectionsView />}
-        {page === "tasks" && <TasksView />}
+        {page === "tasks" && <TasksView refreshTrigger={bgRefreshTick} />}
         {page === "learn" && <LearnUsageView />}
         {page === "channels" && <ChannelsView />}
         {page === "terminal" && <TerminalView />}

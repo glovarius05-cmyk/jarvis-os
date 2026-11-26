@@ -26,7 +26,7 @@ import { MarkdownText } from "./MarkdownText";
 
 type WorkTab = "kanban" | "loops" | "reminders" | "inbox";
 
-export function TasksView() {
+export function TasksView({ refreshTrigger = 0 }: { refreshTrigger?: number }) {
   const [tab, setTab] = useState<WorkTab>("kanban");
   const [autoEnabled, setAutoEnabled] = useState(false);
   const [tasks, setTasks] = useState<KanbanTaskInfo[]>([]);
@@ -75,7 +75,7 @@ export function TasksView() {
 
   useEffect(() => {
     void refresh();
-  }, [refresh]);
+  }, [refresh, refreshTrigger]);
 
   const handleAddTask = async (e: React.FormEvent) => {
     e.preventDefault();

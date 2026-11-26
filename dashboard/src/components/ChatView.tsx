@@ -237,6 +237,7 @@ export function ChatView({
   const [savingBrainId, setSavingBrainId] = useState<string | number | null>(null);
   const [savedBrainMsg, setSavedBrainMsg] = useState<string | null>(null);
   const [expandedTools, setExpandedTools] = useState<Record<number, boolean>>({});
+  const [expandedHistoryTools, setExpandedHistoryTools] = useState<Record<string, boolean>>({});
 
   const handleCopyText = useCallback(async (id: string | number, text: string) => {
     try {
@@ -1167,6 +1168,52 @@ export function ChatView({
                             </div>
                           </div>
                         )}
+                        {!isUser && Array.isArray(m.meta?.tools) && (m.meta.tools as LiveTurnState["tools"]).length > 0 && (() => {
+                          const steps = buildToolTimeline(m.meta.tools as LiveTurnState["tools"]);
+                          const openKey = `hist_${m.id}`;
+                          const isOpen = Boolean(expandedHistoryTools[openKey]);
+                          return (
+                            <div className="mb-2.5 rounded-xl border border-zinc-800/80 bg-zinc-950/60 text-xs">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setExpandedHistoryTools((prev) => ({ ...prev, [openKey]: !prev[openKey] }))
+                                }
+                                className="flex w-full items-center justify-between gap-2 px-2.5 py-1.5 text-left font-mono text-[11px] text-zinc-400 hover:text-zinc-200 transition"
+                              >
+                                <span className="flex items-center gap-1.5">
+                                  <Wrench className="h-3 w-3 text-amber-400" />
+                                  <span>Использовано инструментов: {steps.length}</span>
+                                </span>
+                                {isOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                              </button>
+                              {isOpen && (
+                                <div className="space-y-1.5 border-t border-zinc-800/70 p-2">
+                                  {steps.map((st, sIdx) => (
+                                    <div key={sIdx} className="rounded-lg border border-zinc-800/60 bg-zinc-900/50 p-2 font-mono text-[10px]">
+                                      <div className="flex items-center justify-between text-zinc-200">
+                                        <span>{st.name}</span>
+                                        <span className={st.status === "error" ? "text-rose-400" : "text-emerald-400"}>
+                                          {st.status === "error" ? "ERR" : "OK"}
+                                        </span>
+                                      </div>
+                                      {st.argsText && (
+                                        <pre className="mt-1 max-h-24 overflow-auto whitespace-pre-wrap break-all text-zinc-400">
+                                          {st.argsText}
+                                        </pre>
+                                      )}
+                                      {st.resultText && (
+                                        <pre className="mt-1 max-h-28 overflow-auto whitespace-pre-wrap break-all border-t border-zinc-800/60 pt-1 text-zinc-300">
+                                          {st.resultText.slice(0, 800)}
+                                        </pre>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
                         <MarkdownText content={m.content} />
                       </div>
                       {isUser && (

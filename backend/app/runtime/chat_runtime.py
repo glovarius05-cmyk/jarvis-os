@@ -428,6 +428,14 @@ class ChatRuntime:
                 answer, honesty_flag = apply_honesty_guard(
                     raw_answer, created_background_job=created_bg_job
                 )
+                tool_history = [
+                    {
+                        "type": str(te.get("type") or ""),
+                        "tool_name": str(te.get("tool_name") or ""),
+                        "content": str(te.get("content") or "")[:1200],
+                    }
+                    for te in (job.tool_events if job is not None else [])
+                ]
                 saved = self._sessions.add_message(
                     session_id,
                     "assistant",
@@ -439,6 +447,7 @@ class ChatRuntime:
                         "cancelled": cancel_event.is_set(),
                         "honesty_guard": honesty_flag,
                         "trace_id": trace_handle.trace_id if trace_handle is not None else "",
+                        "tools": tool_history,
                     },
                 )
                 if self._usage is not None:

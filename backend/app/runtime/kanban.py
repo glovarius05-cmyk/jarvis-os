@@ -282,6 +282,14 @@ class KanbanRuntime:
             conn.commit()
         return self.get_task(tid)
 
+    def _emit_ws_update(self, task_id: str, status: str) -> None:
+        pub = getattr(self._inbox, "_ws_publisher", None)
+        if pub is not None:
+            try:
+                pub({"type": "kanban_updated", "task_id": task_id, "status": status})
+            except Exception:  # noqa: BLE001
+                pass
+
     async def _run_aux(
         self,
         *,
@@ -293,35 +301,47 @@ class KanbanRuntime:
         override_provider: str = "",
         override_model: str = "",
     ) -> str:
-        provider, model = self._router.resolve_target(
-            override_provider=override_provider,
-            override_model=override_model,
-            role="main",
-        )
-        engine = self._engine_override or self._router.build_engine(provider, brain=brain, run_mode=run_mode)
-        tools = await self._hub.discover_schemas(brain=brain, run_mode=run_mode)
-        executor = self._hub.make_executor(brain=brain, run_mode=run_mode, session_id=session_id)
+        async def _invoke_role(role: str) -> str:
+            provider, model = self._router.resolve_target(
+                override_provider=override_provider,
+                override_model=override_model,
+                role=role,
+            )
+            engine = self._engine_override or self._router.build_engine(provider, brain=brain, run_mode=run_mode)
+            tools = await self._hub.discover_schemas(brain=brain, run_mode=run_mode)
+            executor = self._hub.make_executor(brain=brain, run_mode=run_mode, session_id=session_id)
 
-        req = EngineRequest(
-            session_id=session_id,
-            brain=brain,
-            system_prompt=system_prompt,
-            messages=[{"role": "user", "content": prompt}],
-            provider=provider,
-            model=model,
-            tools=tools,
-            tool_executor=executor,
-        )
-        parts: list[str] = []
-        final = ""
-        async for ev in engine.stream(req):
-            if ev.type == "text":
-                parts.append(ev.content)
-            elif ev.type == "error":
-                raise RuntimeError(ev.content)
-            elif ev.type == "final":
-                final = ev.content
-        return (final or "".join(parts)).strip()
+            req = EngineRequest(
+                session_id=session_id,
+                brain=brain,
+                system_prompt=system_prompt,
+                messages=[{"role": "user", "content": prompt}],
+                provider=provider,
+                model=model,
+                tools=tools,
+                tool_executor=executor,
+            )
+            parts: list[str] = []
+            final = ""
+            async for ev in engine.stream(req):
+                if ev.type == "text":
+                    parts.append(ev.content)
+                elif ev.type == "error":
+                    raise RuntimeError(ev.content)
+                elif ev.type == "final":
+                    final = ev.content
+            return (final or "".join(parts)).strip()
+
+        try:
+            return await _invoke_role("aux")
+        except Exception as exc:  # noqa: BLE001
+            # Fallback to main brain if aux (e.g. local-llama) is offline/unreachable
+            msg = str(exc).lower()
+            if self._engine_override is None and any(
+                k in msg for k in ("connection", "connecterror", "refused", "unreachable", "timed out", "not running")
+            ):
+                return await _invoke_role("main")
+            raise
 
     async def execute_task(self, task_id: str) -> KanbanTask:
         """Run a task through Specifier -> Worker (or Workflow) -> Acceptance -> Inbox delivery."""
@@ -337,6 +357,7 @@ class KanbanRuntime:
             )
         task = self.get_task(task_id)
         assert task is not None
+        self._emit_ws_update(task_id, "running")
 
         try:
             # 1. Specifier stage (read-only) if no spec yet
@@ -433,6 +454,7 @@ class KanbanRuntime:
                 body=summary_body,
                 owner_chat=task.owner_chat,
             )
+            self._emit_ws_update(task.id, final_status)
             return self.get_task(task.id)  # type: ignore[return-value]
         except Exception as exc:  # noqa: BLE001
             with self._lock, self._connect() as conn:

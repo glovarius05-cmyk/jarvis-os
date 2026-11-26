@@ -19,6 +19,7 @@ export interface LiveTurnState {
 export interface ChatSocketHandlers {
   onFinal?: (sessionId: string) => void;
   onTurnStart?: (sessionId: string) => void;
+  onBackgroundUpdate?: () => void;
 }
 
 export function useChatSocket(handlers: ChatSocketHandlers = {}) {
@@ -156,6 +157,8 @@ export function useChatSocket(handlers: ChatSocketHandlers = {}) {
           } else if (type === "approval_resolved") {
             const aid = String(msg.approval_id ?? "");
             setPendingApprovals((prev) => prev.filter((p) => p.approval_id !== aid));
+          } else if (type === "inbox_item" || type === "kanban_updated") {
+            handlersRef.current.onBackgroundUpdate?.();
           }
         } catch {
           // Ignore malformed frame

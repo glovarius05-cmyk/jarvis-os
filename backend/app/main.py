@@ -54,7 +54,9 @@ async def _scheduler_loop(ctr: AppContainer) -> None:
             await ctr.kanban.tick(brain_names)
         except asyncio.CancelledError:
             raise
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            if "429" in str(exc) or "rate" in str(exc).lower() or "quota" in str(exc).lower():
+                await asyncio.sleep(45.0)
             continue
 
 
