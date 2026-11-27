@@ -228,6 +228,8 @@ export function ChatView({
     }
   });
   const [editingWakeWord, setEditingWakeWord] = useState(false);
+  const [wakeHeard, setWakeHeard] = useState("");
+  const [wakeError, setWakeError] = useState("");
   const wakeModeRef = useRef(false);
   const wakeWordRef = useRef(wakeWord);
   wakeWordRef.current = wakeWord;
@@ -841,10 +843,11 @@ export function ChatView({
   }, []);
 
   const stopWakeRecognition = useCallback(() => {
-    const rec = wakeRecRef.current as { stop?: () => void } | null;
-    if (rec?.stop) {
+    const rec = wakeRecRef.current as { abort?: () => void; stop?: () => void } | null;
+    if (rec) {
       try {
-        rec.stop();
+        if (rec.abort) rec.abort();
+        else if (rec.stop) rec.stop();
       } catch {}
     }
     wakeRecRef.current = null;
@@ -852,17 +855,22 @@ export function ChatView({
 
   const handleQaToggleRef = useRef<() => Promise<void>>(async () => {});
   handleQaToggleRef.current = handleQaToggle;
+  const liveStateRef = useRef(geminiLive.liveState);
+  liveStateRef.current = geminiLive.liveState;
+  const wakeRestartTimerRef = useRef<number | null>(null);
+  const wakeTriggeredRef = useRef(false);
 
-  useEffect(() => {
-    const shouldListenWake = wakeMode && !qaMode && geminiLive.liveState === "off" && !listening;
-    if (!shouldListenWake) {
-      stopWakeRecognition();
-      return;
+  const startWakeListener = useCallback(() => {
+    if (!wakeModeRef.current || qaModeRef.current || liveStateRef.current !== "off") return;
+    if (wakeRestartTimerRef.current !== null) {
+      window.clearTimeout(wakeRestartTimerRef.current);
+      wakeRestartTimerRef.current = null;
     }
+    if (wakeRecRef.current) return;
 
     const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
     if (!window.isSecureContext && !isLocal) {
-      setDraft("Для ожидания кодовой фразы нужен HTTPS (или localhost).");
+      setWakeError("Нужен HTTPS (или localhost) для доступа к микрофону.");
       wakeModeRef.current = false;
       setWakeMode(false);
       return;
@@ -873,93 +881,144 @@ export function ChatView({
       (window as unknown as Record<string, unknown>).webkitSpeechRecognition;
 
     if (typeof SpeechRec !== "function") {
-      setDraft("Браузер не поддерживает распознавание речи для кодовой фразы.");
+      setWakeError("Браузер не поддерживает SpeechRecognition.");
       wakeModeRef.current = false;
       setWakeMode(false);
       return;
     }
 
-    let cancelled = false;
-    let restartTimer: number | null = null;
+    wakeTriggeredRef.current = false;
+    setWakeError("");
 
-    const startListener = () => {
-      if (cancelled || !wakeModeRef.current) return;
-      stopWakeRecognition();
+    const rec = new (SpeechRec as new () => {
+      lang: string;
+      continuous: boolean;
+      interimResults: boolean;
+      onresult: ((e: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null;
+      onerror: ((e: { error?: string }) => void) | null;
+      onend: (() => void) | null;
+      start: () => void;
+      stop: () => void;
+      abort?: () => void;
+    })();
 
-      const rec = new (SpeechRec as new () => {
-        lang: string;
-        continuous: boolean;
-        interimResults: boolean;
-        onresult: ((e: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null;
-        onerror: ((e: { error?: string }) => void) | null;
-        onend: (() => void) | null;
-        start: () => void;
-        stop: () => void;
-      })();
+    rec.lang = "ru-RU";
+    rec.continuous = true;
+    rec.interimResults = true;
+    wakeRecRef.current = rec;
 
-      rec.lang = "ru-RU";
-      rec.continuous = true;
-      rec.interimResults = true;
-      wakeRecRef.current = rec;
+    rec.onresult = (ev) => {
+      if (!wakeModeRef.current || wakeTriggeredRef.current) return;
+      let combined = "";
+      for (let i = Math.max(0, ev.results.length - 3); i < ev.results.length; i++) {
+        const t = ev.results[i]?.[0]?.transcript || "";
+        combined += " " + t;
+      }
+      const norm = combined
+        .toLowerCase()
+        .replace(/ё/g, "е")
+        .replace(/[^\p{L}\p{N}\s]/gu, " ")
+        .replace(/\s+/g, " ")
+        .trim();
 
-      rec.onresult = (ev) => {
-        if (cancelled || !wakeModeRef.current) return;
-        let combined = "";
-        for (let i = Math.max(0, ev.results.length - 3); i < ev.results.length; i++) {
-          const t = ev.results[i]?.[0]?.transcript || "";
-          combined += " " + t;
-        }
-        const norm = combined.toLowerCase().trim();
-        const target = (wakeWordRef.current || "джарвис").toLowerCase().trim();
-        const matched =
-          (target && norm.includes(target)) ||
-          (target === "джарвис" && (norm.includes("jarvis") || norm.includes("джарвиз")));
+      if (norm) {
+        setWakeHeard(norm.slice(-60));
+      }
 
-        if (matched) {
-          stopWakeRecognition();
-          playActivationChime();
-          void handleQaToggleRef.current();
-        }
-      };
+      const target = (wakeWordRef.current || "джарвис")
+        .toLowerCase()
+        .replace(/ё/g, "е")
+        .replace(/[^\p{L}\p{N}\s]/gu, " ")
+        .replace(/\s+/g, " ")
+        .trim();
 
-      rec.onerror = (ev) => {
-        if (ev?.error === "not-allowed" || ev?.error === "service-not-allowed") {
-          setDraft("Доступ к микрофону запрещён в настройках браузера.");
-          wakeModeRef.current = false;
-          setWakeMode(false);
-        }
-      };
+      const matched =
+        (target && norm.includes(target)) ||
+        (target === "джарвис" &&
+          (norm.includes("jarvis") ||
+            norm.includes("jarwis") ||
+            norm.includes("jervis") ||
+            norm.includes("джарвиз") ||
+            norm.includes("джарвес") ||
+            norm.includes("джарв")));
 
-      rec.onend = () => {
-        if (!cancelled && wakeModeRef.current && !qaModeRef.current) {
-          restartTimer = window.setTimeout(startListener, 350);
-        }
-      };
-
-      try {
-        rec.start();
-      } catch {
-        if (!cancelled && wakeModeRef.current) {
-          restartTimer = window.setTimeout(startListener, 600);
-        }
+      if (matched) {
+        wakeTriggeredRef.current = true;
+        stopWakeRecognition();
+        setWakeHeard("");
+        playActivationChime();
+        void handleQaToggleRef.current();
       }
     };
 
-    const bootTimer = window.setTimeout(startListener, 350);
+    rec.onerror = (ev) => {
+      const code = ev?.error || "unknown";
+      if (code === "not-allowed" || code === "service-not-allowed") {
+        setWakeError("Доступ к микрофону запрещён в настройках браузера.");
+        wakeModeRef.current = false;
+        setWakeMode(false);
+        stopWakeRecognition();
+        return;
+      }
+      if (code !== "no-speech" && code !== "aborted") {
+        setWakeError(`Ошибка распознавания: ${code}`);
+      }
+    };
 
+    rec.onend = () => {
+      wakeRecRef.current = null;
+      if (wakeModeRef.current && !wakeTriggeredRef.current && !qaModeRef.current && liveStateRef.current === "off") {
+        wakeRestartTimerRef.current = window.setTimeout(() => {
+          startWakeListener();
+        }, 300);
+      }
+    };
+
+    try {
+      rec.start();
+    } catch (err) {
+      wakeRecRef.current = null;
+      setWakeError(err instanceof Error ? err.message : "Не удалось запустить микрофон");
+    }
+  }, [playActivationChime, stopWakeRecognition]);
+
+  useEffect(() => {
+    const shouldListenWake = wakeMode && !qaMode && geminiLive.liveState === "off" && !listening;
+    if (!shouldListenWake) {
+      if (wakeRestartTimerRef.current !== null) {
+        window.clearTimeout(wakeRestartTimerRef.current);
+        wakeRestartTimerRef.current = null;
+      }
+      stopWakeRecognition();
+      return;
+    }
+    if (!wakeRecRef.current && !wakeTriggeredRef.current) {
+      const t = window.setTimeout(() => {
+        startWakeListener();
+      }, 350);
+      return () => window.clearTimeout(t);
+    }
+  }, [wakeMode, qaMode, geminiLive.liveState, listening, startWakeListener, stopWakeRecognition]);
+
+  useEffect(() => {
     return () => {
-      cancelled = true;
-      window.clearTimeout(bootTimer);
-      if (restartTimer !== null) window.clearTimeout(restartTimer);
+      if (wakeRestartTimerRef.current !== null) {
+        window.clearTimeout(wakeRestartTimerRef.current);
+      }
       stopWakeRecognition();
     };
-  }, [wakeMode, qaMode, geminiLive.liveState, listening, playActivationChime, stopWakeRecognition]);
+  }, [stopWakeRecognition]);
 
   const handleWakeToggle = () => {
     const next = !wakeMode;
     wakeModeRef.current = next;
     setWakeMode(next);
-    if (!next) {
+    setWakeHeard("");
+    setWakeError("");
+    if (next) {
+      // Start synchronously inside user click gesture (required by iOS Safari / mobile browsers)
+      startWakeListener();
+    } else {
       stopWakeRecognition();
     }
   };
@@ -1826,7 +1885,7 @@ export function ChatView({
           onDrop={handleDrop}
         >
           {/* Wake Word Standby Banner */}
-          {wakeMode && !qaMode && geminiLive.liveState === "off" && (
+          {(wakeMode || wakeError) && !qaMode && geminiLive.liveState === "off" && (
             <div className="mx-auto mb-2.5 flex max-w-3xl flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-500/35 bg-amber-950/25 px-3 py-2 text-xs text-amber-200">
               <div className="flex min-w-0 items-center gap-2">
                 <Ear className="h-4 w-4 shrink-0 animate-pulse text-amber-400" />
@@ -1858,6 +1917,11 @@ export function ChatView({
                 ) : (
                   <span className="truncate font-medium">
                     Жду кодовую фразу: <strong className="text-amber-300">«{wakeWord}»</strong>
+                    {wakeError ? (
+                      <span className="ml-2 text-rose-300">({wakeError})</span>
+                    ) : wakeHeard ? (
+                      <span className="ml-2 text-zinc-400">· Слышу: «{wakeHeard}»</span>
+                    ) : null}
                   </span>
                 )}
               </div>
@@ -1871,10 +1935,13 @@ export function ChatView({
                 </button>
                 <button
                   type="button"
-                  onClick={handleWakeToggle}
+                  onClick={() => {
+                    if (wakeMode) handleWakeToggle();
+                    else setWakeError("");
+                  }}
                   className="rounded-lg border border-rose-500/40 bg-rose-500/20 px-2 py-1 text-[11px] font-medium text-rose-200 hover:bg-rose-500/30"
                 >
-                  Выкл
+                  {wakeMode ? "Выкл" : "Закрыть"}
                 </button>
               </div>
             </div>
