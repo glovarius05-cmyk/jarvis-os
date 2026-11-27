@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 import json
 import logging
 import os
@@ -33,10 +34,14 @@ def _resolve_gemini_key(container: AppContainer) -> str:
 
 
 def _build_live_system_instruction(container: AppContainer, brain: str) -> str:
+    now_utc = datetime.now(timezone.utc)
+    now_msk = now_utc.astimezone(timezone(timedelta(hours=3)))
     parts = [
         "Ты Jarvis - персональный голосовой ИИ-ассистент.",
+        f"Текущая дата и время: {now_msk.strftime('%Y-%m-%d %H:%M')} (MSK, UTC+3) / {now_utc.strftime('%Y-%m-%d %H:%M')} UTC.",
         "Отвечай естественно, кратко и по делу (1-3 предложения, если пользователь не просит подробностей).",
         "Говори на языке пользователя (обычно на русском).",
+        "Если вопрос касается актуальных событий, новостей, курсов, погоды или информации на сегодня - используй Google Search или инструменты браузера (jarvis_browser_navigate / jarvis_browser_task).",
     ]
     try:
         core_mem = container.core_memory.render(brain)
@@ -45,6 +50,39 @@ def _build_live_system_instruction(container: AppContainer, brain: str) -> str:
     except Exception:  # noqa: BLE001
         pass
     return "\n".join(parts)
+
+
+def _build_live_tools() -> list[dict[str, Any]]:
+    return [
+        {"googleSearch": {}},
+        {
+            "functionDeclarations": [
+                {
+                    "name": "jarvis_browser_navigate",
+                    "description": "Open a specific webpage URL and extract its title and text content.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "url": {"type": "string", "description": "Target webpage URL to visit"},
+                        },
+                        "required": ["url"],
+                    },
+                },
+                {
+                    "name": "jarvis_browser_task",
+                    "description": "Autonomous browser agent for multi-step web tasks (clicking, forms, SPA pages).",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "task": {"type": "string", "description": "Goal or instruction for the browser agent"},
+                            "url": {"type": "string", "description": "Initial target website URL"},
+                        },
+                        "required": ["task"],
+                    },
+                },
+            ]
+        },
+    ]
 
 
 @router.get("/api/voice/live/status")
@@ -121,6 +159,7 @@ async def ws_voice_live(websocket: WebSocket) -> None:
                     "systemInstruction": {
                         "parts": [{"text": system_prompt}],
                     },
+                    "tools": _build_live_tools(),
                     "inputAudioTranscription": {},
                     "outputAudioTranscription": {},
                 }
@@ -172,6 +211,39 @@ async def ws_voice_live(websocket: WebSocket) -> None:
                     data = json.loads(raw)
                     if "setupComplete" in data:
                         await websocket.send_json({"type": "ready"})
+                        continue
+
+                    tool_call = data.get("toolCall")
+                    if isinstance(tool_call, dict):
+                        fcalls = tool_call.get("functionCalls") or []
+                        responses: list[dict[str, Any]] = []
+                        for fc in fcalls:
+                            if not isinstance(fc, dict):
+                                continue
+                            fc_id = str(fc.get("id") or "")
+                            fc_name = str(fc.get("name") or "")
+                            fc_args = fc.get("args") if isinstance(fc.get("args"), dict) else {}
+                            await websocket.send_json({"type": "tool", "name": fc_name, "status": "running"})
+                            try:
+                                result = await container.hub.call_tool(
+                                    brain=active_brain,
+                                    name=fc_name,
+                                    args=fc_args,
+                                    run_mode="full",
+                                    session_id=session_id or "voice-live",
+                                )
+                            except Exception as exc:  # noqa: BLE001
+                                result = f"Tool error: {exc}"
+                            await websocket.send_json({"type": "tool", "name": fc_name, "status": "done"})
+                            responses.append(
+                                {
+                                    "id": fc_id,
+                                    "name": fc_name,
+                                    "response": {"result": str(result)[:12000]},
+                                }
+                            )
+                        if responses:
+                            await gemini_ws.send(json.dumps({"toolResponse": {"functionResponses": responses}}))
                         continue
 
                     sc = data.get("serverContent")

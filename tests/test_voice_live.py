@@ -28,3 +28,23 @@ async def test_voice_live_status_endpoint(tmp_path: Path):
         data2 = res2.json()
         assert data2["configured"] is True
         assert "gemini-2.5-flash-native-audio" in data2["model"]
+
+
+def test_voice_live_tools_and_date_instruction(tmp_path: Path):
+    from app.api.routes.voice_live import _build_live_system_instruction, _build_live_tools
+
+    ctr = AppContainer.build(
+        state_dir=tmp_path / "state",
+        brains_dir=tmp_path / "brains",
+        force_login=False,
+    )
+    instr = _build_live_system_instruction(ctr, "Brain Default")
+    assert "Текущая дата и время:" in instr
+    assert "MSK" in instr
+
+    tools = _build_live_tools()
+    assert any("googleSearch" in t for t in tools)
+    fn_decls = next(t["functionDeclarations"] for t in tools if "functionDeclarations" in t)
+    names = {f["name"] for f in fn_decls}
+    assert "jarvis_browser_navigate" in names
+    assert "jarvis_browser_task" in names
