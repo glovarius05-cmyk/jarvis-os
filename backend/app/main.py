@@ -31,6 +31,7 @@ from app.api.routes import (
     telemetry,
     terminal_webhooks,
     v1_compat,
+    voice_live,
     work,
 )
 from app.container import AppContainer
@@ -110,6 +111,7 @@ def create_app(container: AppContainer | None = None, *, enable_scheduler: bool 
     application.include_router(telemetry.router)
     application.include_router(terminal_webhooks.router)
     application.include_router(v1_compat.router)
+    application.include_router(voice_live.router)
 
     @application.get("/robots.txt", response_class=PlainTextResponse)
     def robots_txt() -> str:

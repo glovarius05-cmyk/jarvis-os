@@ -42,6 +42,7 @@ import {
   type SessionItem,
 } from "../api/client";
 import type { LiveTurnState } from "../hooks/useChatSocket";
+import { useGeminiLive } from "../hooks/useGeminiLive";
 import { MarkdownText } from "./MarkdownText";
 
 export interface AttachedFileItem {
@@ -217,6 +218,17 @@ export function ChatView({
   const qaModeRef = useRef(false);
   const qaStatusRef = useRef<"idle" | "listening" | "thinking" | "speaking">("idle");
   const startQaListeningRef = useRef<() => void>(() => {});
+  const selectedIdRef = useRef(selectedId);
+  selectedIdRef.current = selectedId;
+
+  const geminiLive = useGeminiLive({
+    onTranscript: () => {
+      const sid = selectedIdRef.current;
+      if (sid) {
+        void api.getSession(sid).then((d) => setMessages(d.messages)).catch(() => {});
+      }
+    },
+  });
   const [playingMessageId, setPlayingMessageId] = useState<number | string | null>(null);
   const [loadingAudioId, setLoadingAudioId] = useState<number | string | null>(null);
   const [autoSpeak, setAutoSpeak] = useState<boolean>(() => {
@@ -763,21 +775,36 @@ export function ChatView({
     startQaListeningRef.current = startQaListening;
   }, [startQaListening]);
 
-  const handleQaToggle = () => {
+  const handleQaToggle = async () => {
+    if (geminiLive.liveState !== "off") {
+      geminiLive.stopLive();
+      return;
+    }
     if (qaMode) {
       stopQaMode();
-    } else {
-      if (listening) {
-        const rec = recRef.current as { stop?: () => void } | null;
-        try {
-          rec?.stop?.();
-        } catch {}
-        setListening(false);
-      }
-      qaModeRef.current = true;
-      setQaMode(true);
-      startQaListening();
+      return;
     }
+    if (listening) {
+      const rec = recRef.current as { stop?: () => void } | null;
+      try {
+        rec?.stop?.();
+      } catch {}
+      setListening(false);
+    }
+    if (geminiLive.configured) {
+      let sid = selectedId;
+      if (!sid) {
+        const created = await api.createSession({ brain: activeBrain, title: t("chat.new") });
+        sid = created.id;
+        setSelectedId(sid);
+        await loadSessions();
+      }
+      await geminiLive.startLive(sid);
+      return;
+    }
+    qaModeRef.current = true;
+    setQaMode(true);
+    startQaListening();
   };
 
   const handleFilesAdded = useCallback(
@@ -1641,23 +1668,42 @@ export function ChatView({
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
         >
-          {/* Live Voice Q&A Mode Status Bar */}
-          {qaMode && (
-            <div className="mx-auto mb-2.5 flex max-w-3xl items-center justify-between gap-2 rounded-xl border border-emerald-500/40 bg-emerald-950/30 px-3 py-2 text-xs text-emerald-200">
+          {/* Live Voice Q&A Mode Status Bar (Gemini Live or Web Speech) */}
+          {(qaMode || geminiLive.liveState !== "off" || geminiLive.liveError) && (
+            <div className={`mx-auto mb-2.5 flex max-w-3xl items-center justify-between gap-2 rounded-xl border px-3 py-2 text-xs ${
+              geminiLive.liveError && geminiLive.liveState === "off"
+                ? "border-rose-500/40 bg-rose-950/30 text-rose-200"
+                : "border-emerald-500/40 bg-emerald-950/30 text-emerald-200"
+            }`}>
               <div className="flex min-w-0 items-center gap-2">
-                <span className="relative flex h-2.5 w-2.5 shrink-0">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-                  <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-400" />
-                </span>
+                {geminiLive.liveState !== "off" || qaMode ? (
+                  <span className="relative flex h-2.5 w-2.5 shrink-0">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                    <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-400" />
+                  </span>
+                ) : (
+                  <AlertCircle className="h-4 w-4 shrink-0 text-rose-400" />
+                )}
                 <span className="truncate font-medium">
-                  {qaStatus === "listening" && "Режим Вопрос-Ответ: слушаю вас..."}
-                  {qaStatus === "thinking" && "Режим Вопрос-Ответ: Jarvis думает..."}
-                  {qaStatus === "speaking" && "Режим Вопрос-Ответ: Jarvis отвечает..."}
-                  {qaStatus === "idle" && "Режим Вопрос-Ответ активен"}
+                  {geminiLive.liveError && geminiLive.liveState === "off"
+                    ? geminiLive.liveError
+                    : geminiLive.liveState === "connecting"
+                    ? "Gemini Live: подключение..."
+                    : geminiLive.liveState === "listening"
+                    ? "Gemini Live: слушаю (говорите, можно перебивать)..."
+                    : geminiLive.liveState === "speaking"
+                    ? "Gemini Live: Jarvis отвечает..."
+                    : qaStatus === "listening"
+                    ? "Режим Вопрос-Ответ: слушаю вас..."
+                    : qaStatus === "thinking"
+                    ? "Режим Вопрос-Ответ: Jarvis думает..."
+                    : qaStatus === "speaking"
+                    ? "Режим Вопрос-Ответ: Jarvis отвечает..."
+                    : "Режим Вопрос-Ответ активен"}
                 </span>
               </div>
               <div className="flex shrink-0 items-center gap-1.5">
-                {qaStatus === "speaking" && (
+                {qaMode && qaStatus === "speaking" && (
                   <button
                     type="button"
                     onClick={() => startQaListening()}
@@ -1666,13 +1712,18 @@ export function ChatView({
                     Спросить ещё
                   </button>
                 )}
-                <button
-                  type="button"
-                  onClick={stopQaMode}
-                  className="rounded-lg border border-rose-500/40 bg-rose-500/20 px-2 py-1 text-[11px] font-medium text-rose-200 hover:bg-rose-500/30"
-                >
-                  Завершить
-                </button>
+                {(qaMode || geminiLive.liveState !== "off") && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (geminiLive.liveState !== "off") geminiLive.stopLive();
+                      if (qaMode) stopQaMode();
+                    }}
+                    className="rounded-lg border border-rose-500/40 bg-rose-500/20 px-2 py-1 text-[11px] font-medium text-rose-200 hover:bg-rose-500/30"
+                  >
+                    Завершить
+                  </button>
+                )}
               </div>
             </div>
           )}
@@ -1794,15 +1845,21 @@ export function ChatView({
             {/* Live Voice Q&A Mode Button */}
             <button
               type="button"
-              onClick={handleQaToggle}
-              title={qaMode ? "Остановить режим Вопрос-Ответ" : "Голосовой режим Вопрос-Ответ с Jarvis"}
+              onClick={() => void handleQaToggle()}
+              title={
+                qaMode || geminiLive.liveState !== "off"
+                  ? "Остановить режим Вопрос-Ответ"
+                  : geminiLive.configured
+                  ? "Gemini Live: голосовой диалог в реальном времени"
+                  : "Голосовой режим Вопрос-Ответ с Jarvis"
+              }
               className={`relative flex h-10 w-10 sm:h-11 sm:w-11 shrink-0 items-center justify-center rounded-xl border transition active:scale-95 ${
-                qaMode
+                qaMode || geminiLive.liveState !== "off"
                   ? "border-emerald-500 bg-emerald-500/20 text-emerald-300 shadow-lg shadow-emerald-500/20"
                   : "border-zinc-800 bg-zinc-900 text-zinc-300 hover:border-emerald-500/60 hover:text-emerald-400"
               }`}
             >
-              {qaMode && (
+              {(qaMode || geminiLive.liveState !== "off") && (
                 <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
                   <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
                   <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-400" />
