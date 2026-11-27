@@ -219,7 +219,13 @@ export function ChatView({
   const qaModeRef = useRef(false);
   const qaStatusRef = useRef<"idle" | "listening" | "thinking" | "speaking">("idle");
   const startQaListeningRef = useRef<() => void>(() => {});
-  const [wakeMode, setWakeMode] = useState(false);
+  const [wakeMode, setWakeMode] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("jarvis_wake_enabled") === "true";
+    } catch {
+      return false;
+    }
+  });
   const [wakeWord, setWakeWord] = useState<string>(() => {
     try {
       return localStorage.getItem("jarvis_wake_word") || "Джарвис";
@@ -230,7 +236,7 @@ export function ChatView({
   const [editingWakeWord, setEditingWakeWord] = useState(false);
   const [wakeHeard, setWakeHeard] = useState("");
   const [wakeError, setWakeError] = useState("");
-  const wakeModeRef = useRef(false);
+  const wakeModeRef = useRef(wakeMode);
   const wakeWordRef = useRef(wakeWord);
   wakeWordRef.current = wakeWord;
   const wakeRecRef = useRef<unknown>(null);
@@ -1121,7 +1127,16 @@ export function ChatView({
       const t = window.setTimeout(() => {
         startWakeListener();
       }, 350);
-      return () => window.clearTimeout(t);
+      const onFirstGesture = () => {
+        if (wakeModeRef.current && !wakeRecRef.current && !wakeFallbackStopRef.current) {
+          startWakeListener();
+        }
+      };
+      window.addEventListener("pointerdown", onFirstGesture, { once: true });
+      return () => {
+        window.clearTimeout(t);
+        window.removeEventListener("pointerdown", onFirstGesture);
+      };
     }
   }, [wakeMode, qaMode, geminiLive.liveState, listening, startWakeListener, stopWakeRecognition]);
 
@@ -1138,6 +1153,9 @@ export function ChatView({
     const next = !wakeMode;
     wakeModeRef.current = next;
     setWakeMode(next);
+    try {
+      localStorage.setItem("jarvis_wake_enabled", String(next));
+    } catch {}
     setWakeHeard("");
     setWakeError("");
     if (next) {
