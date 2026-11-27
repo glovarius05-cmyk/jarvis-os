@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertCircle,
+  AudioLines,
   Bot,
   Brain,
   Calendar,
@@ -211,6 +212,11 @@ export function ChatView({
   const [model, setModel] = useState(defaultModel);
   const [runMode, setRunMode] = useState<"suggest" | "auto" | "full" | "consensus" | "debate">("full");
   const [listening, setListening] = useState(false);
+  const [qaMode, setQaMode] = useState(false);
+  const [qaStatus, setQaStatus] = useState<"idle" | "listening" | "thinking" | "speaking">("idle");
+  const qaModeRef = useRef(false);
+  const qaStatusRef = useRef<"idle" | "listening" | "thinking" | "speaking">("idle");
+  const startQaListeningRef = useRef<() => void>(() => {});
   const [playingMessageId, setPlayingMessageId] = useState<number | string | null>(null);
   const [loadingAudioId, setLoadingAudioId] = useState<number | string | null>(null);
   const [autoSpeak, setAutoSpeak] = useState<boolean>(() => {
@@ -385,7 +391,7 @@ export function ChatView({
     setLoadingAudioId(null);
   }, []);
 
-  const speakBrowserFallback = (text: string, messageId: number | string) => {
+  const speakBrowserFallback = (text: string, messageId: number | string, onEnded?: () => void) => {
     if ("speechSynthesis" in window) {
       window.speechSynthesis.cancel();
       setPlayingMessageId(messageId);
@@ -415,17 +421,24 @@ export function ChatView({
         utter.rate = 1.02;
       }
 
-      utter.onend = () => setPlayingMessageId(null);
-      utter.onerror = () => setPlayingMessageId(null);
+      utter.onend = () => {
+        setPlayingMessageId(null);
+        onEnded?.();
+      };
+      utter.onerror = () => {
+        setPlayingMessageId(null);
+        onEnded?.();
+      };
       window.speechSynthesis.speak(utter);
     } else {
       setPlayingMessageId(null);
+      onEnded?.();
     }
   };
 
   const playSpeech = useCallback(
-    async (messageId: number | string, text: string) => {
-      if (playingMessageId === messageId) {
+    async (messageId: number | string, text: string, onEnded?: () => void) => {
+      if (playingMessageId === messageId && !onEnded) {
         stopSpeech();
         return;
       }
@@ -450,31 +463,45 @@ export function ChatView({
           audio.onended = () => {
             setPlayingMessageId(null);
             releaseAudio();
+            onEnded?.();
           };
           audio.onerror = () => {
             releaseAudio();
-            speakBrowserFallback(text, messageId);
+            speakBrowserFallback(text, messageId, onEnded);
           };
           setPlayingMessageId(messageId);
           await audio.play().catch(() => {
             releaseAudio();
-            speakBrowserFallback(text, messageId);
+            speakBrowserFallback(text, messageId, onEnded);
           });
         } else {
-          speakBrowserFallback(res.fallbackText || text, messageId);
+          speakBrowserFallback(res.fallbackText || text, messageId, onEnded);
         }
       } catch (err) {
         console.error("TTS playback error", err);
         stopSpeech();
+        onEnded?.();
       }
     },
     [playingMessageId, stopSpeech]
   );
 
   useEffect(() => {
-    if (prevTurnRef.current && !activeTurn && autoSpeak) {
+    if (prevTurnRef.current && !activeTurn) {
       const finishedText = prevTurnRef.current.text;
-      if (finishedText && finishedText.trim()) {
+      if (qaModeRef.current) {
+        if (finishedText && finishedText.trim()) {
+          qaStatusRef.current = "speaking";
+          setQaStatus("speaking");
+          void playSpeech("latest", finishedText, () => {
+            if (qaModeRef.current) {
+              startQaListeningRef.current();
+            }
+          });
+        } else {
+          startQaListeningRef.current();
+        }
+      } else if (autoSpeak && finishedText && finishedText.trim()) {
         void playSpeech("latest", finishedText);
       }
     }
@@ -610,6 +637,149 @@ export function ChatView({
     await startMediaRecorderFallback();
   };
 
+  const stopQaMode = useCallback(() => {
+    qaModeRef.current = false;
+    qaStatusRef.current = "idle";
+    setQaMode(false);
+    setQaStatus("idle");
+    const rec = recRef.current as { stop?: () => void } | null;
+    if (rec?.stop) {
+      try {
+        rec.stop();
+      } catch {}
+    }
+    setListening(false);
+    stopSpeech();
+  }, [stopSpeech]);
+
+  const startQaListening = useCallback(() => {
+    if (!qaModeRef.current) return;
+    stopSpeech();
+
+    const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+    if (!window.isSecureContext && !isLocal) {
+      setDraft("Для режима Вопрос-Ответ нужен HTTPS (или localhost), чтобы браузер разрешил микрофон.");
+      stopQaMode();
+      return;
+    }
+
+    const SpeechRec =
+      (window as unknown as Record<string, unknown>).SpeechRecognition ||
+      (window as unknown as Record<string, unknown>).webkitSpeechRecognition;
+
+    if (typeof SpeechRec !== "function") {
+      setDraft("Ваш браузер не поддерживает потоковое распознавание речи (Web Speech API). Используйте Chrome/Safari или микрофон.");
+      stopQaMode();
+      return;
+    }
+
+    const rec = new (SpeechRec as new () => {
+      lang: string;
+      continuous: boolean;
+      interimResults: boolean;
+      onresult: ((e: { results: ArrayLike<{ isFinal?: boolean } & ArrayLike<{ transcript: string }>> }) => void) | null;
+      onerror: ((e: { error?: string }) => void) | null;
+      onend: (() => void) | null;
+      start: () => void;
+      stop: () => void;
+    })();
+
+    rec.lang = "ru-RU";
+    rec.continuous = false;
+    rec.interimResults = true;
+    recRef.current = rec;
+
+    let finalTranscript = "";
+    let submitted = false;
+
+    rec.onresult = (ev) => {
+      let full = "";
+      let hasFinal = false;
+      for (let i = 0; i < ev.results.length; ++i) {
+        const resItem = ev.results[i];
+        const t = resItem?.[0]?.transcript || "";
+        full += t;
+        if (resItem?.isFinal) hasFinal = true;
+      }
+      finalTranscript = full.trim();
+      setDraft(finalTranscript);
+      if (hasFinal && finalTranscript && !submitted) {
+        submitted = true;
+        try {
+          rec.stop();
+        } catch {}
+        qaStatusRef.current = "thinking";
+        setQaStatus("thinking");
+        setListening(false);
+        void handleSubmit(finalTranscript);
+      }
+    };
+
+    rec.onerror = (ev) => {
+      setListening(false);
+      if (ev?.error === "not-allowed" || ev?.error === "service-not-allowed") {
+        setDraft("Доступ к микрофону запрещён в настройках браузера.");
+        stopQaMode();
+        return;
+      }
+      if (qaModeRef.current && qaStatusRef.current === "listening" && ev?.error === "no-speech") {
+        setTimeout(() => {
+          if (qaModeRef.current && qaStatusRef.current === "listening") {
+            startQaListeningRef.current();
+          }
+        }, 250);
+      }
+    };
+
+    rec.onend = () => {
+      setListening(false);
+      if (!submitted && finalTranscript && qaModeRef.current) {
+        submitted = true;
+        qaStatusRef.current = "thinking";
+        setQaStatus("thinking");
+        void handleSubmit(finalTranscript);
+        return;
+      }
+      if (!submitted && qaModeRef.current && qaStatusRef.current === "listening") {
+        setTimeout(() => {
+          if (qaModeRef.current && qaStatusRef.current === "listening") {
+            startQaListeningRef.current();
+          }
+        }, 250);
+      }
+    };
+
+    try {
+      qaStatusRef.current = "listening";
+      setQaStatus("listening");
+      setListening(true);
+      rec.start();
+    } catch {
+      stopQaMode();
+    }
+  }, [stopQaMode, stopSpeech]);
+
+  useEffect(() => {
+    startQaListeningRef.current = startQaListening;
+  }, [startQaListening]);
+
+  const handleQaToggle = () => {
+    if (qaMode) {
+      stopQaMode();
+    } else {
+      if (listening) {
+        const rec = recRef.current as { stop?: () => void } | null;
+        try {
+          rec?.stop?.();
+        } catch {}
+        setListening(false);
+      }
+      qaModeRef.current = true;
+      setQaMode(true);
+      startQaListening();
+    }
+  };
+
   const handleFilesAdded = useCallback(
     async (files: FileList | File[]) => {
       const fileList = Array.from(files);
@@ -737,8 +907,8 @@ export function ChatView({
     }
   };
 
-  const handleSubmit = async () => {
-    const text = draft.trim();
+  const handleSubmit = async (overrideText?: string) => {
+    const text = (overrideText !== undefined ? overrideText : draft).trim();
     if (!text && attachedFiles.length === 0) return;
     let sid = selectedId;
     if (!sid) {
@@ -1471,6 +1641,42 @@ export function ChatView({
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
         >
+          {/* Live Voice Q&A Mode Status Bar */}
+          {qaMode && (
+            <div className="mx-auto mb-2.5 flex max-w-3xl items-center justify-between gap-2 rounded-xl border border-emerald-500/40 bg-emerald-950/30 px-3 py-2 text-xs text-emerald-200">
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="relative flex h-2.5 w-2.5 shrink-0">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                  <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-400" />
+                </span>
+                <span className="truncate font-medium">
+                  {qaStatus === "listening" && "Режим Вопрос-Ответ: слушаю вас..."}
+                  {qaStatus === "thinking" && "Режим Вопрос-Ответ: Jarvis думает..."}
+                  {qaStatus === "speaking" && "Режим Вопрос-Ответ: Jarvis отвечает..."}
+                  {qaStatus === "idle" && "Режим Вопрос-Ответ активен"}
+                </span>
+              </div>
+              <div className="flex shrink-0 items-center gap-1.5">
+                {qaStatus === "speaking" && (
+                  <button
+                    type="button"
+                    onClick={() => startQaListening()}
+                    className="rounded-lg border border-amber-500/40 bg-amber-500/20 px-2 py-1 text-[11px] font-medium text-amber-200 hover:bg-amber-500/30"
+                  >
+                    Спросить ещё
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={stopQaMode}
+                  className="rounded-lg border border-rose-500/40 bg-rose-500/20 px-2 py-1 text-[11px] font-medium text-rose-200 hover:bg-rose-500/30"
+                >
+                  Завершить
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Drag Overlay Hint */}
           {isDragging && (
             <div className="mx-auto mb-3 max-w-3xl rounded-xl border border-dashed border-amber-500 bg-amber-500/15 py-2.5 text-center text-xs font-medium text-amber-300">
@@ -1570,12 +1776,12 @@ export function ChatView({
               onClick={handleMicToggle}
               title={listening ? t("chat.micStop") : t("chat.micStart")}
               className={`relative flex h-10 w-10 sm:h-11 sm:w-11 shrink-0 items-center justify-center rounded-xl border transition active:scale-95 ${
-                listening
+                listening && !qaMode
                   ? "border-rose-500 bg-rose-500/20 text-rose-300 shadow-lg shadow-rose-500/20"
                   : "border-zinc-800 bg-zinc-900 text-zinc-300 hover:border-amber-500 hover:text-amber-400"
               }`}
             >
-              {listening ? (
+              {listening && !qaMode ? (
                 <span className="relative flex h-4 w-4 items-center justify-center">
                   <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-rose-400 opacity-75" />
                   <MicOff className="relative h-4 w-4 text-rose-400" />
@@ -1583,6 +1789,26 @@ export function ChatView({
               ) : (
                 <Mic className="h-5 w-5" />
               )}
+            </button>
+
+            {/* Live Voice Q&A Mode Button */}
+            <button
+              type="button"
+              onClick={handleQaToggle}
+              title={qaMode ? "Остановить режим Вопрос-Ответ" : "Голосовой режим Вопрос-Ответ с Jarvis"}
+              className={`relative flex h-10 w-10 sm:h-11 sm:w-11 shrink-0 items-center justify-center rounded-xl border transition active:scale-95 ${
+                qaMode
+                  ? "border-emerald-500 bg-emerald-500/20 text-emerald-300 shadow-lg shadow-emerald-500/20"
+                  : "border-zinc-800 bg-zinc-900 text-zinc-300 hover:border-emerald-500/60 hover:text-emerald-400"
+              }`}
+            >
+              {qaMode && (
+                <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                  <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-400" />
+                </span>
+              )}
+              <AudioLines className="h-5 w-5" />
             </button>
 
             {/* Input Textarea */}
