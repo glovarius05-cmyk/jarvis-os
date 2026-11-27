@@ -58,6 +58,8 @@ export function useGeminiLive({ onTranscript }: UseGeminiLiveOptions = {}) {
   const [configured, setConfigured] = useState<boolean>(false);
   const [liveState, setLiveState] = useState<GeminiLiveState>("off");
   const [liveError, setLiveError] = useState<string>("");
+  const [toolsEnabled, setToolsEnabled] = useState<boolean>(true);
+  const [lastToolAction, setLastToolAction] = useState<string>("");
 
   const wsRef = useRef<WebSocket | null>(null);
   const captureCtxRef = useRef<AudioContext | null>(null);
@@ -204,6 +206,8 @@ export function useGeminiLive({ onTranscript }: UseGeminiLiveOptions = {}) {
           try {
             const msg = JSON.parse(ev.data as string);
             if (msg.type === "ready") {
+              setToolsEnabled(msg.tools_enabled !== false);
+              setLastToolAction("");
               setLiveState("listening");
               // Start microphone streaming once Gemini setup is complete
               const source = captureCtx.createMediaStreamSource(stream);
@@ -222,6 +226,12 @@ export function useGeminiLive({ onTranscript }: UseGeminiLiveOptions = {}) {
               };
               source.connect(proc);
               proc.connect(captureCtx.destination);
+            } else if (msg.type === "tool") {
+              if (msg.status === "running") {
+                setLastToolAction(`Выполняю ${msg.name}...`);
+              } else if (msg.status === "done") {
+                setLastToolAction(`${msg.name}: ${msg.result || "готово"}`);
+              }
             } else if (msg.type === "audio" && msg.data) {
               schedulePcmPlayback(msg.data, Number(msg.rate) || 24000);
             } else if (msg.type === "interrupted") {
@@ -261,6 +271,8 @@ export function useGeminiLive({ onTranscript }: UseGeminiLiveOptions = {}) {
     configured,
     liveState,
     liveError,
+    toolsEnabled,
+    lastToolAction,
     startLive,
     stopLive,
   };

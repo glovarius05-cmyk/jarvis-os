@@ -102,7 +102,12 @@ def _resolve_live_voice(requested_voice: str) -> str:
     return "Charon"
 
 
-def _build_live_system_instruction(container: AppContainer, brain: str, voice_name: str = "Charon") -> str:
+def _build_live_system_instruction(
+    container: AppContainer,
+    brain: str,
+    voice_name: str = "Charon",
+    with_tools: bool = True,
+) -> str:
     now_utc = datetime.now(timezone.utc)
     now_msk = now_utc.astimezone(timezone(timedelta(hours=3)))
     is_female = voice_name.lower() in _FEMALE_LIVE_VOICES
@@ -116,10 +121,20 @@ def _build_live_system_instruction(container: AppContainer, brain: str, voice_na
         f"Текущая дата и время: {now_msk.strftime('%Y-%m-%d %H:%M')} (MSK, UTC+3) / {now_utc.strftime('%Y-%m-%d %H:%M')} UTC.",
         "Отвечай естественно, кратко и по делу (1-3 предложения, если пользователь не просит подробностей).",
         "Говори на языке пользователя (обычно на русском).",
-        "Если вопрос касается актуальных событий, новостей, курсов, погоды или информации на сегодня - используй инструменты web_search / web_fetch / jarvis_browser_navigate / jarvis_browser_task.",
-        "Если пользователь просит записать заметку, идею или найти/прочитать заметки во Втором мозге (Obsidian Vault) - используй vault_write (сохраняй в wiki/notes/<slug>.md или wiki/diary/<YYYY-MM-DD>.md), vault_edit, vault_search, vault_read и vault_list.",
-        "Если пользователь просит закончить или завершить голосовой разговор (например, 'закончим разговор', 'завершить', 'отбой', 'пока'), сразу вызови инструмент end_voice_conversation.",
     ]
+    if with_tools:
+        parts.extend(
+            [
+                "Если вопрос касается актуальных событий, новостей, курсов, погоды или информации на сегодня - ОБЯЗАТЕЛЬНО вызови web_search / web_fetch / jarvis_browser_navigate / jarvis_browser_task.",
+                "Если пользователь просит записать заметку, идею или найти/прочитать заметки во Втором мозге (Obsidian Vault) - ОБЯЗАТЕЛЬНО вызови vault_write (сохраняй в wiki/notes/<slug>.md), vault_edit, vault_search, vault_read или vault_list.",
+                "КРИТИЧЕСКИ ВАЖНО: Никогда не говори, что заметка записана или поиск выполнен, если ты реально не вызвал инструмент и не получил успешный ответ от него!",
+                "Если пользователь просит закончить или завершить голосовой разговор (например, 'закончим разговор', 'завершить', 'отбой', 'пока'), сразу вызови инструмент end_voice_conversation.",
+            ]
+        )
+    else:
+        parts.append(
+            "ВНИМАНИЕ: Инструменты (поиск, браузер, запись заметок в Obsidian) в этом сеансе отключены. Честно предупреждай об этом и НИКОГДА не выдумывай, что записал заметку."
+        )
     try:
         core_mem = container.core_memory.render(brain)
         if core_mem and core_mem.strip():
@@ -137,9 +152,9 @@ def _build_live_tools() -> list[dict[str, Any]]:
                     "name": "web_search",
                     "description": "Search the public web for up-to-date information, news, weather, prices, and events.",
                     "parameters": {
-                        "type": "object",
+                        "type": "OBJECT",
                         "properties": {
-                            "query": {"type": "string", "description": "Search query"},
+                            "query": {"type": "STRING", "description": "Search query"},
                         },
                         "required": ["query"],
                     },
@@ -148,9 +163,9 @@ def _build_live_tools() -> list[dict[str, Any]]:
                     "name": "web_fetch",
                     "description": "Fetch a public webpage URL and return readable text.",
                     "parameters": {
-                        "type": "object",
+                        "type": "OBJECT",
                         "properties": {
-                            "url": {"type": "string", "description": "Webpage URL to read"},
+                            "url": {"type": "STRING", "description": "Webpage URL to read"},
                         },
                         "required": ["url"],
                     },
@@ -159,9 +174,9 @@ def _build_live_tools() -> list[dict[str, Any]]:
                     "name": "jarvis_browser_navigate",
                     "description": "Open a specific webpage URL in the browser agent and extract its title and content.",
                     "parameters": {
-                        "type": "object",
+                        "type": "OBJECT",
                         "properties": {
-                            "url": {"type": "string", "description": "Target webpage URL to visit"},
+                            "url": {"type": "STRING", "description": "Target webpage URL to visit"},
                         },
                         "required": ["url"],
                     },
@@ -170,10 +185,10 @@ def _build_live_tools() -> list[dict[str, Any]]:
                     "name": "jarvis_browser_task",
                     "description": "Autonomous browser agent for multi-step interactive web tasks.",
                     "parameters": {
-                        "type": "object",
+                        "type": "OBJECT",
                         "properties": {
-                            "task": {"type": "string", "description": "Goal or instruction for the browser agent"},
-                            "url": {"type": "string", "description": "Initial target website URL"},
+                            "task": {"type": "STRING", "description": "Goal or instruction for the browser agent"},
+                            "url": {"type": "STRING", "description": "Initial target website URL"},
                         },
                         "required": ["task"],
                     },
@@ -182,9 +197,9 @@ def _build_live_tools() -> list[dict[str, Any]]:
                     "name": "vault_list",
                     "description": "List files and directories inside the Second Brain (Obsidian Vault).",
                     "parameters": {
-                        "type": "object",
+                        "type": "OBJECT",
                         "properties": {
-                            "path": {"type": "string", "description": "Relative directory path (empty string for root)"},
+                            "path": {"type": "STRING", "description": "Relative directory path (empty string for root)"},
                         },
                         "required": ["path"],
                     },
@@ -193,9 +208,9 @@ def _build_live_tools() -> list[dict[str, Any]]:
                     "name": "vault_search",
                     "description": "Search text across notes in the Second Brain (Obsidian Vault).",
                     "parameters": {
-                        "type": "object",
+                        "type": "OBJECT",
                         "properties": {
-                            "query": {"type": "string", "description": "Text to search for in notes"},
+                            "query": {"type": "STRING", "description": "Text to search for in notes"},
                         },
                         "required": ["query"],
                     },
@@ -204,9 +219,9 @@ def _build_live_tools() -> list[dict[str, Any]]:
                     "name": "vault_read",
                     "description": "Read content from a Markdown note in the Second Brain (Obsidian Vault).",
                     "parameters": {
-                        "type": "object",
+                        "type": "OBJECT",
                         "properties": {
-                            "path": {"type": "string", "description": "Relative file path (e.g. wiki/notes/idea.md)"},
+                            "path": {"type": "STRING", "description": "Relative file path (e.g. wiki/notes/idea.md)"},
                         },
                         "required": ["path"],
                     },
@@ -215,10 +230,10 @@ def _build_live_tools() -> list[dict[str, Any]]:
                     "name": "vault_write",
                     "description": "Create or overwrite a Markdown note in the Second Brain (Obsidian Vault).",
                     "parameters": {
-                        "type": "object",
+                        "type": "OBJECT",
                         "properties": {
-                            "path": {"type": "string", "description": "Relative file path (e.g. wiki/notes/my-note.md)"},
-                            "content": {"type": "string", "description": "Markdown content of the note"},
+                            "path": {"type": "STRING", "description": "Relative file path (e.g. wiki/notes/my-note.md)"},
+                            "content": {"type": "STRING", "description": "Markdown content of the note"},
                         },
                         "required": ["path", "content"],
                     },
@@ -227,11 +242,11 @@ def _build_live_tools() -> list[dict[str, Any]]:
                     "name": "vault_edit",
                     "description": "Replace an exact text snippet inside an existing note in the Second Brain.",
                     "parameters": {
-                        "type": "object",
+                        "type": "OBJECT",
                         "properties": {
-                            "path": {"type": "string", "description": "Relative file path"},
-                            "old_text": {"type": "string", "description": "Exact existing snippet to replace"},
-                            "new_text": {"type": "string", "description": "Replacement text"},
+                            "path": {"type": "STRING", "description": "Relative file path"},
+                            "old_text": {"type": "STRING", "description": "Exact existing snippet to replace"},
+                            "new_text": {"type": "STRING", "description": "Replacement text"},
                         },
                         "required": ["path", "old_text", "new_text"],
                     },
@@ -240,9 +255,9 @@ def _build_live_tools() -> list[dict[str, Any]]:
                     "name": "end_voice_conversation",
                     "description": "End the live voice conversation when the user asks to stop or finish talking.",
                     "parameters": {
-                        "type": "object",
+                        "type": "OBJECT",
                         "properties": {
-                            "reason": {"type": "string", "description": "Short reason why conversation ended"},
+                            "reason": {"type": "STRING", "description": "Short reason why conversation ended"},
                         },
                         "required": ["reason"],
                     },
@@ -289,7 +304,6 @@ async def ws_voice_live(websocket: WebSocket) -> None:
         model = f"models/{model}"
 
     active_brain = container.settings.load_public().get("active_brain", "Brain Default")
-    system_prompt = _build_live_system_instruction(container, active_brain, voice_name=voice_name)
     ws_url = f"{GEMINI_LIVE_WS_BASE}?key={quote(api_key, safe='')}"
 
     user_buf: list[str] = []
@@ -315,6 +329,12 @@ async def ws_voice_live(websocket: WebSocket) -> None:
         for with_tools in (True, False):
             setup_complete = False
             tool_pending = False
+            system_prompt = _build_live_system_instruction(
+                container,
+                active_brain,
+                voice_name=voice_name,
+                with_tools=with_tools,
+            )
             async with websockets.connect(ws_url, max_size=8 * 1024 * 1024) as gemini_ws:
                 setup_inner: dict[str, Any] = {
                     "model": model,
@@ -386,7 +406,7 @@ async def ws_voice_live(websocket: WebSocket) -> None:
                         data = json.loads(raw)
                         if "setupComplete" in data:
                             setup_complete = True
-                            await websocket.send_json({"type": "ready"})
+                            await websocket.send_json({"type": "ready", "tools_enabled": with_tools})
                             continue
 
                         tool_call = data.get("toolCall")
@@ -401,6 +421,7 @@ async def ws_voice_live(websocket: WebSocket) -> None:
                                     fc_id = str(fc.get("id") or "")
                                     fc_name = str(fc.get("name") or "")
                                     fc_args = fc.get("args") if isinstance(fc.get("args"), dict) else {}
+                                    logger.info("Gemini Live toolCall: %s args=%s", fc_name, fc_args)
                                     if fc_name == "end_voice_conversation":
                                         _flush_transcripts()
                                         await websocket.send_json({"type": "end_conversation", "reason": "tool_call"})
@@ -416,12 +437,20 @@ async def ws_voice_live(websocket: WebSocket) -> None:
                                         )
                                     except Exception as exc:  # noqa: BLE001
                                         result = f"Tool error: {exc}"
-                                    await websocket.send_json({"type": "tool", "name": fc_name, "status": "done"})
+                                    logger.info("Gemini Live toolResult: %s -> %s", fc_name, str(result)[:200])
+                                    await websocket.send_json(
+                                        {
+                                            "type": "tool",
+                                            "name": fc_name,
+                                            "status": "done",
+                                            "result": str(result)[:200],
+                                        }
+                                    )
                                     responses.append(
                                         {
                                             "id": fc_id,
                                             "name": fc_name,
-                                            "response": {"result": str(result)[:12000]},
+                                            "response": {"output": str(result)[:12000]},
                                         }
                                     )
                                 if responses:

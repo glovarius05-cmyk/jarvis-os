@@ -91,7 +91,10 @@ def test_voice_mapping_and_gender_persona(tmp_path: Path):
         brains_dir=tmp_path / "brains",
         force_login=False,
     )
-    fem_instr = _build_live_system_instruction(ctr, "Brain Default", voice_name="Aoede")
+    fem_instr = _build_live_system_instruction(ctr, "Brain Default", voice_name="Aoede", with_tools=True)
     assert "женском роде" in fem_instr
+    assert "vault_write" in fem_instr
+    no_tools_instr = _build_live_system_instruction(ctr, "Brain Default", voice_name="Aoede", with_tools=False)
+    assert "отключены" in no_tools_instr
     male_instr = _build_live_system_instruction(ctr, "Brain Default", voice_name="Charon")
     assert "мужском роде" in male_instr

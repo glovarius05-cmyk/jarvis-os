@@ -2189,9 +2189,9 @@ export function ChatView({
                     : geminiLive.liveState === "connecting"
                     ? "Gemini Live: подключение..."
                     : geminiLive.liveState === "listening"
-                    ? "Gemini Live: слушаю (говорите, можно перебивать)..."
+                    ? `Gemini Live: слушаю...${!geminiLive.toolsEnabled ? " (⚠️ без инструментов)" : geminiLive.lastToolAction ? ` · ${geminiLive.lastToolAction}` : ""}`
                     : geminiLive.liveState === "speaking"
-                    ? "Gemini Live: Jarvis отвечает..."
+                    ? `Gemini Live: Jarvis отвечает...${geminiLive.lastToolAction ? ` · ${geminiLive.lastToolAction}` : ""}`
                     : qaStatus === "listening"
                     ? "Режим Вопрос-Ответ: слушаю вас..."
                     : qaStatus === "thinking"
