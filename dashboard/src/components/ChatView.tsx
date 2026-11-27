@@ -842,6 +842,16 @@ export function ChatView({
     } catch {}
   }, []);
 
+  const handleQaToggleRef = useRef<() => Promise<void>>(async () => {});
+  handleQaToggleRef.current = handleQaToggle;
+  const liveStateRef = useRef(geminiLive.liveState);
+  liveStateRef.current = geminiLive.liveState;
+
+  const wakeRestartTimerRef = useRef<number | null>(null);
+  const wakeTriggeredRef = useRef(false);
+  const wakeFallbackStopRef = useRef<(() => void) | null>(null);
+  const useWakeFallbackRef = useRef(false);
+
   const stopWakeRecognition = useCallback(() => {
     const rec = wakeRecRef.current as { abort?: () => void; stop?: () => void } | null;
     if (rec) {
@@ -851,14 +861,138 @@ export function ChatView({
       } catch {}
     }
     wakeRecRef.current = null;
+    if (wakeFallbackStopRef.current) {
+      try {
+        wakeFallbackStopRef.current();
+      } catch {}
+      wakeFallbackStopRef.current = null;
+    }
   }, []);
 
-  const handleQaToggleRef = useRef<() => Promise<void>>(async () => {});
-  handleQaToggleRef.current = handleQaToggle;
-  const liveStateRef = useRef(geminiLive.liveState);
-  liveStateRef.current = geminiLive.liveState;
-  const wakeRestartTimerRef = useRef<number | null>(null);
-  const wakeTriggeredRef = useRef(false);
+  const matchWakePhrase = useCallback((rawText: string): { matched: boolean; norm: string } => {
+    const norm = rawText
+      .toLowerCase()
+      .replace(/ё/g, "е")
+      .replace(/[^\p{L}\p{N}\s]/gu, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    const target = (wakeWordRef.current || "джарвис")
+      .toLowerCase()
+      .replace(/ё/g, "е")
+      .replace(/[^\p{L}\p{N}\s]/gu, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    const isDefaultJarvis = target === "джарвис" || target === "jarvis";
+    const matched =
+      Boolean(target && norm.includes(target)) ||
+      (isDefaultJarvis &&
+        (norm.includes("jarvis") ||
+          norm.includes("jarwis") ||
+          norm.includes("jervis") ||
+          norm.includes("джарвис") ||
+          norm.includes("джарвиз") ||
+          norm.includes("джарвес") ||
+          norm.includes("джарв")));
+    return { matched, norm };
+  }, []);
+
+  const startMediaRecorderWakeFallback = useCallback(async () => {
+    if (!wakeModeRef.current || qaModeRef.current || liveStateRef.current !== "off") return;
+    if (wakeFallbackStopRef.current) return;
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setWakeError("Микрофон недоступен (нужен HTTPS).");
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      const ctx = new AudioCtx();
+      const src = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 1024;
+      src.connect(analyser);
+      const buf = new Float32Array(analyser.fftSize);
+
+      let stopped = false;
+      let recording = false;
+      let lastLoudAt = 0;
+      let rafId = 0;
+      let activeRecorder: MediaRecorder | null = null;
+
+      const cleanup = () => {
+        stopped = true;
+        if (rafId) cancelAnimationFrame(rafId);
+        if (activeRecorder && activeRecorder.state !== "inactive") {
+          try {
+            activeRecorder.stop();
+          } catch {}
+        }
+        stream.getTracks().forEach((t) => t.stop());
+        void ctx.close().catch(() => {});
+      };
+      wakeFallbackStopRef.current = cleanup;
+      setWakeError("");
+
+      const triggerClip = () => {
+        if (stopped || recording || !wakeModeRef.current || wakeTriggeredRef.current) return;
+        recording = true;
+        const chunks: BlobPart[] = [];
+        const mr = new MediaRecorder(stream);
+        activeRecorder = mr;
+        mr.ondataavailable = (e) => {
+          if (e.data.size > 0) chunks.push(e.data);
+        };
+        mr.onstop = async () => {
+          recording = false;
+          activeRecorder = null;
+          if (stopped || !wakeModeRef.current || wakeTriggeredRef.current) return;
+          const blob = new Blob(chunks, { type: "audio/webm" });
+          if (blob.size < 800) return;
+          try {
+            const res = await api.transcribeAudio(blob, "wake.webm");
+            const txt = (res.text || "").trim();
+            if (!txt) return;
+            const { matched, norm } = matchWakePhrase(txt);
+            setWakeHeard(norm.slice(-60));
+            if (matched && !wakeTriggeredRef.current) {
+              wakeTriggeredRef.current = true;
+              cleanup();
+              wakeFallbackStopRef.current = null;
+              setWakeHeard("");
+              playActivationChime();
+              void handleQaToggleRef.current();
+            }
+          } catch {}
+        };
+        mr.start();
+        window.setTimeout(() => {
+          if (mr.state !== "inactive") {
+            try {
+              mr.stop();
+            } catch {}
+          }
+        }, 2200);
+      };
+
+      const tick = () => {
+        if (stopped) return;
+        analyser.getFloatTimeDomainData(buf);
+        let sum = 0;
+        for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+        const rms = Math.sqrt(sum / buf.length);
+        const now = performance.now();
+        if (rms > 0.025 && !recording && now - lastLoudAt > 300) {
+          lastLoudAt = now;
+          triggerClip();
+        }
+        rafId = requestAnimationFrame(tick);
+      };
+      rafId = requestAnimationFrame(tick);
+    } catch (err) {
+      setWakeError(err instanceof Error ? err.message : "Нет доступа к микрофону");
+    }
+  }, [matchWakePhrase, playActivationChime]);
 
   const startWakeListener = useCallback(() => {
     if (!wakeModeRef.current || qaModeRef.current || liveStateRef.current !== "off") return;
@@ -866,7 +1000,7 @@ export function ChatView({
       window.clearTimeout(wakeRestartTimerRef.current);
       wakeRestartTimerRef.current = null;
     }
-    if (wakeRecRef.current) return;
+    if (wakeRecRef.current || wakeFallbackStopRef.current) return;
 
     const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
     if (!window.isSecureContext && !isLocal) {
@@ -880,15 +1014,13 @@ export function ChatView({
       (window as unknown as Record<string, unknown>).SpeechRecognition ||
       (window as unknown as Record<string, unknown>).webkitSpeechRecognition;
 
-    if (typeof SpeechRec !== "function") {
-      setWakeError("Браузер не поддерживает SpeechRecognition.");
-      wakeModeRef.current = false;
-      setWakeMode(false);
+    if (typeof SpeechRec !== "function" || useWakeFallbackRef.current) {
+      wakeTriggeredRef.current = false;
+      void startMediaRecorderWakeFallback();
       return;
     }
 
     wakeTriggeredRef.current = false;
-    setWakeError("");
 
     const rec = new (SpeechRec as new () => {
       lang: string;
@@ -902,45 +1034,24 @@ export function ChatView({
       abort?: () => void;
     })();
 
-    rec.lang = "ru-RU";
+    const phrase = (wakeWordRef.current || "Джарвис").trim();
+    rec.lang = /[а-яА-ЯёЁ]/.test(phrase) ? "ru-RU" : "en-US";
     rec.continuous = true;
     rec.interimResults = true;
     wakeRecRef.current = rec;
 
     rec.onresult = (ev) => {
       if (!wakeModeRef.current || wakeTriggeredRef.current) return;
+      setWakeError("");
       let combined = "";
       for (let i = Math.max(0, ev.results.length - 3); i < ev.results.length; i++) {
         const t = ev.results[i]?.[0]?.transcript || "";
         combined += " " + t;
       }
-      const norm = combined
-        .toLowerCase()
-        .replace(/ё/g, "е")
-        .replace(/[^\p{L}\p{N}\s]/gu, " ")
-        .replace(/\s+/g, " ")
-        .trim();
-
+      const { matched, norm } = matchWakePhrase(combined);
       if (norm) {
         setWakeHeard(norm.slice(-60));
       }
-
-      const target = (wakeWordRef.current || "джарвис")
-        .toLowerCase()
-        .replace(/ё/g, "е")
-        .replace(/[^\p{L}\p{N}\s]/gu, " ")
-        .replace(/\s+/g, " ")
-        .trim();
-
-      const matched =
-        (target && norm.includes(target)) ||
-        (target === "джарвис" &&
-          (norm.includes("jarvis") ||
-            norm.includes("jarwis") ||
-            norm.includes("jervis") ||
-            norm.includes("джарвиз") ||
-            norm.includes("джарвес") ||
-            norm.includes("джарв")));
 
       if (matched) {
         wakeTriggeredRef.current = true;
@@ -954,10 +1065,23 @@ export function ChatView({
     rec.onerror = (ev) => {
       const code = ev?.error || "unknown";
       if (code === "not-allowed" || code === "service-not-allowed") {
+        // Try MediaRecorder fallback if browser Speech service is blocked
+        if (code === "service-not-allowed") {
+          useWakeFallbackRef.current = true;
+          stopWakeRecognition();
+          void startMediaRecorderWakeFallback();
+          return;
+        }
         setWakeError("Доступ к микрофону запрещён в настройках браузера.");
         wakeModeRef.current = false;
         setWakeMode(false);
         stopWakeRecognition();
+        return;
+      }
+      if (code === "network" || code === "language-not-supported" || code === "audio-capture") {
+        useWakeFallbackRef.current = true;
+        stopWakeRecognition();
+        void startMediaRecorderWakeFallback();
         return;
       }
       if (code !== "no-speech" && code !== "aborted") {
@@ -976,11 +1100,12 @@ export function ChatView({
 
     try {
       rec.start();
-    } catch (err) {
+    } catch {
       wakeRecRef.current = null;
-      setWakeError(err instanceof Error ? err.message : "Не удалось запустить микрофон");
+      useWakeFallbackRef.current = true;
+      void startMediaRecorderWakeFallback();
     }
-  }, [playActivationChime, stopWakeRecognition]);
+  }, [matchWakePhrase, playActivationChime, startMediaRecorderWakeFallback, stopWakeRecognition]);
 
   useEffect(() => {
     const shouldListenWake = wakeMode && !qaMode && geminiLive.liveState === "off" && !listening;
