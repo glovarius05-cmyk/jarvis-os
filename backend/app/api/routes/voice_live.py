@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 import json
 import logging
 import os
+import re
 from typing import Any
 from urllib.parse import quote
 
@@ -33,6 +34,32 @@ def _resolve_gemini_key(container: AppContainer) -> str:
     return str(cfg.get("gemini_api_key") or os.environ.get("GEMINI_API_KEY") or "").strip()
 
 
+_VOICE_STOP_PHRASES = (
+    "закончим разговор",
+    "заканчиваем разговор",
+    "заверши разговор",
+    "завершаем разговор",
+    "завершить разговор",
+    "прекратим разговор",
+    "стоп разговор",
+    "конец связи",
+    "хватит на сегодня",
+    "отбой джарвис",
+    "пока джарвис",
+    "stop conversation",
+    "end conversation",
+    "goodbye jarvis",
+)
+
+
+def _is_voice_stop_phrase(text: str) -> bool:
+    norm = re.sub(r"[^\w\s]", " ", text.lower().replace("ё", "е"))
+    norm = re.sub(r"\s+", " ", norm).strip()
+    if not norm:
+        return False
+    return any(p in norm for p in _VOICE_STOP_PHRASES)
+
+
 def _build_live_system_instruction(container: AppContainer, brain: str) -> str:
     now_utc = datetime.now(timezone.utc)
     now_msk = now_utc.astimezone(timezone(timedelta(hours=3)))
@@ -42,6 +69,7 @@ def _build_live_system_instruction(container: AppContainer, brain: str) -> str:
         "Отвечай естественно, кратко и по делу (1-3 предложения, если пользователь не просит подробностей).",
         "Говори на языке пользователя (обычно на русском).",
         "Если вопрос касается актуальных событий, новостей, курсов, погоды или информации на сегодня - используй Google Search или инструменты браузера (jarvis_browser_navigate / jarvis_browser_task).",
+        "Если пользователь просит закончить или завершить голосовой разговор (например, 'закончим разговор', 'завершить', 'отбой', 'пока'), сразу вызови инструмент end_voice_conversation.",
     ]
     try:
         core_mem = container.core_memory.render(brain)
@@ -78,6 +106,16 @@ def _build_live_tools() -> list[dict[str, Any]]:
                             "url": {"type": "string", "description": "Initial target website URL"},
                         },
                         "required": ["task"],
+                    },
+                },
+                {
+                    "name": "end_voice_conversation",
+                    "description": "End the live voice conversation when the user asks to stop or finish talking.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "reason": {"type": "string", "description": "Short reason why conversation ended"},
+                        },
                     },
                 },
             ]
@@ -223,6 +261,10 @@ async def ws_voice_live(websocket: WebSocket) -> None:
                             fc_id = str(fc.get("id") or "")
                             fc_name = str(fc.get("name") or "")
                             fc_args = fc.get("args") if isinstance(fc.get("args"), dict) else {}
+                            if fc_name == "end_voice_conversation":
+                                _flush_transcripts()
+                                await websocket.send_json({"type": "end_conversation", "reason": "tool_call"})
+                                return
                             await websocket.send_json({"type": "tool", "name": fc_name, "status": "running"})
                             try:
                                 result = await container.hub.call_tool(
@@ -259,6 +301,10 @@ async def ws_voice_live(websocket: WebSocket) -> None:
                         txt = str(in_tr["text"])
                         user_buf.append(txt)
                         await websocket.send_json({"type": "transcript", "role": "user", "text": txt})
+                        if _is_voice_stop_phrase("".join(user_buf)):
+                            _flush_transcripts()
+                            await websocket.send_json({"type": "end_conversation", "reason": "voice_stop"})
+                            return
 
                     out_tr = sc.get("outputTranscription")
                     if isinstance(out_tr, dict) and out_tr.get("text"):

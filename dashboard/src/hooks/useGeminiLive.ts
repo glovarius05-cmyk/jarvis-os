@@ -224,6 +224,9 @@ export function useGeminiLive({ onTranscript }: UseGeminiLiveOptions = {}) {
               setLiveState("listening");
             } else if (msg.type === "turn_complete") {
               onTranscript?.();
+            } else if (msg.type === "end_conversation") {
+              onTranscript?.();
+              stopLive();
             } else if (msg.type === "error") {
               setLiveError(String(msg.message || "Gemini Live error"));
               stopLive();

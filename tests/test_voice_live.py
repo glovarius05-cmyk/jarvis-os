@@ -48,3 +48,13 @@ def test_voice_live_tools_and_date_instruction(tmp_path: Path):
     names = {f["name"] for f in fn_decls}
     assert "jarvis_browser_navigate" in names
     assert "jarvis_browser_task" in names
+    assert "end_voice_conversation" in names
+
+
+def test_voice_stop_phrase_detection():
+    from app.api.routes.voice_live import _is_voice_stop_phrase
+
+    assert _is_voice_stop_phrase("Джарвис, закончим разговор!") is True
+    assert _is_voice_stop_phrase("Всё, завершить разговор") is True
+    assert _is_voice_stop_phrase("Stop conversation please") is True
+    assert _is_voice_stop_phrase("Какая сегодня погода в Москве?") is False

@@ -723,6 +723,31 @@ export function ChatView({
     rec.interimResults = true;
     recRef.current = rec;
 
+    const isVoiceStopPhrase = (raw: string) => {
+      const norm = raw
+        .toLowerCase()
+        .replace(/ё/g, "е")
+        .replace(/[^\p{L}\p{N}\s]/gu, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+      return [
+        "закончим разговор",
+        "заканчиваем разговор",
+        "заверши разговор",
+        "завершаем разговор",
+        "завершить разговор",
+        "прекратим разговор",
+        "стоп разговор",
+        "конец связи",
+        "хватит на сегодня",
+        "отбой джарвис",
+        "пока джарвис",
+        "stop conversation",
+        "end conversation",
+        "goodbye jarvis",
+      ].some((p) => norm.includes(p));
+    };
+
     let finalTranscript = "";
     let submitted = false;
 
@@ -739,6 +764,11 @@ export function ChatView({
       setDraft(finalTranscript);
       if (hasFinal && finalTranscript && !submitted) {
         submitted = true;
+        if (isVoiceStopPhrase(finalTranscript)) {
+          setDraft("");
+          stopQaMode();
+          return;
+        }
         try {
           rec.stop();
         } catch {}
@@ -769,6 +799,11 @@ export function ChatView({
       setListening(false);
       if (!submitted && finalTranscript && qaModeRef.current) {
         submitted = true;
+        if (isVoiceStopPhrase(finalTranscript)) {
+          setDraft("");
+          stopQaMode();
+          return;
+        }
         qaStatusRef.current = "thinking";
         setQaStatus("thinking");
         void handleSubmit(finalTranscript);
