@@ -117,6 +117,7 @@ def _build_live_system_instruction(container: AppContainer, brain: str, voice_na
         "Отвечай естественно, кратко и по делу (1-3 предложения, если пользователь не просит подробностей).",
         "Говори на языке пользователя (обычно на русском).",
         "Если вопрос касается актуальных событий, новостей, курсов, погоды или информации на сегодня - используй инструменты web_search / web_fetch / jarvis_browser_navigate / jarvis_browser_task.",
+        "Если пользователь просит записать заметку, идею или найти/прочитать заметки во Втором мозге (Obsidian Vault) - используй vault_write (сохраняй в wiki/notes/<slug>.md или wiki/diary/<YYYY-MM-DD>.md), vault_edit, vault_search, vault_read и vault_list.",
         "Если пользователь просит закончить или завершить голосовой разговор (например, 'закончим разговор', 'завершить', 'отбой', 'пока'), сразу вызови инструмент end_voice_conversation.",
     ]
     try:
@@ -175,6 +176,64 @@ def _build_live_tools() -> list[dict[str, Any]]:
                             "url": {"type": "string", "description": "Initial target website URL"},
                         },
                         "required": ["task"],
+                    },
+                },
+                {
+                    "name": "vault_list",
+                    "description": "List files and directories inside the Second Brain (Obsidian Vault).",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "path": {"type": "string", "description": "Relative directory path (empty string for root)"},
+                        },
+                        "required": ["path"],
+                    },
+                },
+                {
+                    "name": "vault_search",
+                    "description": "Search text across notes in the Second Brain (Obsidian Vault).",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string", "description": "Text to search for in notes"},
+                        },
+                        "required": ["query"],
+                    },
+                },
+                {
+                    "name": "vault_read",
+                    "description": "Read content from a Markdown note in the Second Brain (Obsidian Vault).",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "path": {"type": "string", "description": "Relative file path (e.g. wiki/notes/idea.md)"},
+                        },
+                        "required": ["path"],
+                    },
+                },
+                {
+                    "name": "vault_write",
+                    "description": "Create or overwrite a Markdown note in the Second Brain (Obsidian Vault).",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "path": {"type": "string", "description": "Relative file path (e.g. wiki/notes/my-note.md)"},
+                            "content": {"type": "string", "description": "Markdown content of the note"},
+                        },
+                        "required": ["path", "content"],
+                    },
+                },
+                {
+                    "name": "vault_edit",
+                    "description": "Replace an exact text snippet inside an existing note in the Second Brain.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "path": {"type": "string", "description": "Relative file path"},
+                            "old_text": {"type": "string", "description": "Exact existing snippet to replace"},
+                            "new_text": {"type": "string", "description": "Replacement text"},
+                        },
+                        "required": ["path", "old_text", "new_text"],
                     },
                 },
                 {

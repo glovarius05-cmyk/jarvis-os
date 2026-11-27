@@ -49,6 +49,11 @@ def test_voice_live_tools_and_date_instruction(tmp_path: Path):
     assert "web_fetch" in names
     assert "jarvis_browser_navigate" in names
     assert "jarvis_browser_task" in names
+    assert "vault_write" in names
+    assert "vault_edit" in names
+    assert "vault_read" in names
+    assert "vault_search" in names
+    assert "vault_list" in names
     assert "end_voice_conversation" in names
 
 
