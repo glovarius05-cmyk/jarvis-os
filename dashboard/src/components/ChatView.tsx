@@ -10,6 +10,7 @@ import {
   ChevronRight,
   Copy,
   Download,
+  Ear,
   FileCode,
   FileSpreadsheet,
   FileText,
@@ -218,6 +219,19 @@ export function ChatView({
   const qaModeRef = useRef(false);
   const qaStatusRef = useRef<"idle" | "listening" | "thinking" | "speaking">("idle");
   const startQaListeningRef = useRef<() => void>(() => {});
+  const [wakeMode, setWakeMode] = useState(false);
+  const [wakeWord, setWakeWord] = useState<string>(() => {
+    try {
+      return localStorage.getItem("jarvis_wake_word") || "Джарвис";
+    } catch {
+      return "Джарвис";
+    }
+  });
+  const [editingWakeWord, setEditingWakeWord] = useState(false);
+  const wakeModeRef = useRef(false);
+  const wakeWordRef = useRef(wakeWord);
+  wakeWordRef.current = wakeWord;
+  const wakeRecRef = useRef<unknown>(null);
   const selectedIdRef = useRef(selectedId);
   selectedIdRef.current = selectedId;
 
@@ -805,6 +819,149 @@ export function ChatView({
     qaModeRef.current = true;
     setQaMode(true);
     startQaListening();
+  };
+
+  const playActivationChime = useCallback(() => {
+    try {
+      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      const ctx = new AudioCtx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(660, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(990, ctx.currentTime + 0.11);
+      gain.gain.setValueAtTime(0.08, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.16);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.17);
+      osc.onended = () => void ctx.close().catch(() => {});
+    } catch {}
+  }, []);
+
+  const stopWakeRecognition = useCallback(() => {
+    const rec = wakeRecRef.current as { stop?: () => void } | null;
+    if (rec?.stop) {
+      try {
+        rec.stop();
+      } catch {}
+    }
+    wakeRecRef.current = null;
+  }, []);
+
+  const handleQaToggleRef = useRef<() => Promise<void>>(async () => {});
+  handleQaToggleRef.current = handleQaToggle;
+
+  useEffect(() => {
+    const shouldListenWake = wakeMode && !qaMode && geminiLive.liveState === "off" && !listening;
+    if (!shouldListenWake) {
+      stopWakeRecognition();
+      return;
+    }
+
+    const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+    if (!window.isSecureContext && !isLocal) {
+      setDraft("Для ожидания кодовой фразы нужен HTTPS (или localhost).");
+      wakeModeRef.current = false;
+      setWakeMode(false);
+      return;
+    }
+
+    const SpeechRec =
+      (window as unknown as Record<string, unknown>).SpeechRecognition ||
+      (window as unknown as Record<string, unknown>).webkitSpeechRecognition;
+
+    if (typeof SpeechRec !== "function") {
+      setDraft("Браузер не поддерживает распознавание речи для кодовой фразы.");
+      wakeModeRef.current = false;
+      setWakeMode(false);
+      return;
+    }
+
+    let cancelled = false;
+    let restartTimer: number | null = null;
+
+    const startListener = () => {
+      if (cancelled || !wakeModeRef.current) return;
+      stopWakeRecognition();
+
+      const rec = new (SpeechRec as new () => {
+        lang: string;
+        continuous: boolean;
+        interimResults: boolean;
+        onresult: ((e: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null;
+        onerror: ((e: { error?: string }) => void) | null;
+        onend: (() => void) | null;
+        start: () => void;
+        stop: () => void;
+      })();
+
+      rec.lang = "ru-RU";
+      rec.continuous = true;
+      rec.interimResults = true;
+      wakeRecRef.current = rec;
+
+      rec.onresult = (ev) => {
+        if (cancelled || !wakeModeRef.current) return;
+        let combined = "";
+        for (let i = Math.max(0, ev.results.length - 3); i < ev.results.length; i++) {
+          const t = ev.results[i]?.[0]?.transcript || "";
+          combined += " " + t;
+        }
+        const norm = combined.toLowerCase().trim();
+        const target = (wakeWordRef.current || "джарвис").toLowerCase().trim();
+        const matched =
+          (target && norm.includes(target)) ||
+          (target === "джарвис" && (norm.includes("jarvis") || norm.includes("джарвиз")));
+
+        if (matched) {
+          stopWakeRecognition();
+          playActivationChime();
+          void handleQaToggleRef.current();
+        }
+      };
+
+      rec.onerror = (ev) => {
+        if (ev?.error === "not-allowed" || ev?.error === "service-not-allowed") {
+          setDraft("Доступ к микрофону запрещён в настройках браузера.");
+          wakeModeRef.current = false;
+          setWakeMode(false);
+        }
+      };
+
+      rec.onend = () => {
+        if (!cancelled && wakeModeRef.current && !qaModeRef.current) {
+          restartTimer = window.setTimeout(startListener, 350);
+        }
+      };
+
+      try {
+        rec.start();
+      } catch {
+        if (!cancelled && wakeModeRef.current) {
+          restartTimer = window.setTimeout(startListener, 600);
+        }
+      }
+    };
+
+    const bootTimer = window.setTimeout(startListener, 350);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(bootTimer);
+      if (restartTimer !== null) window.clearTimeout(restartTimer);
+      stopWakeRecognition();
+    };
+  }, [wakeMode, qaMode, geminiLive.liveState, listening, playActivationChime, stopWakeRecognition]);
+
+  const handleWakeToggle = () => {
+    const next = !wakeMode;
+    wakeModeRef.current = next;
+    setWakeMode(next);
+    if (!next) {
+      stopWakeRecognition();
+    }
   };
 
   const handleFilesAdded = useCallback(
@@ -1668,6 +1825,61 @@ export function ChatView({
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
         >
+          {/* Wake Word Standby Banner */}
+          {wakeMode && !qaMode && geminiLive.liveState === "off" && (
+            <div className="mx-auto mb-2.5 flex max-w-3xl flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-500/35 bg-amber-950/25 px-3 py-2 text-xs text-amber-200">
+              <div className="flex min-w-0 items-center gap-2">
+                <Ear className="h-4 w-4 shrink-0 animate-pulse text-amber-400" />
+                {editingWakeWord ? (
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      setEditingWakeWord(false);
+                      try {
+                        localStorage.setItem("jarvis_wake_word", wakeWord.trim() || "Джарвис");
+                      } catch {}
+                    }}
+                    className="flex items-center gap-1.5"
+                  >
+                    <span className="text-zinc-400">Фраза:</span>
+                    <input
+                      autoFocus
+                      value={wakeWord}
+                      onChange={(e) => setWakeWord(e.target.value)}
+                      onBlur={() => {
+                        setEditingWakeWord(false);
+                        try {
+                          localStorage.setItem("jarvis_wake_word", wakeWord.trim() || "Джарвис");
+                        } catch {}
+                      }}
+                      className="w-32 rounded border border-amber-500/50 bg-zinc-900 px-2 py-0.5 text-xs text-zinc-100 outline-none"
+                    />
+                  </form>
+                ) : (
+                  <span className="truncate font-medium">
+                    Жду кодовую фразу: <strong className="text-amber-300">«{wakeWord}»</strong>
+                  </span>
+                )}
+              </div>
+              <div className="flex shrink-0 items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setEditingWakeWord((v) => !v)}
+                  className="rounded-lg border border-zinc-700 bg-zinc-900/80 px-2 py-1 text-[11px] text-zinc-300 hover:border-amber-500/50"
+                >
+                  {editingWakeWord ? "Готово" : "Изменить"}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleWakeToggle}
+                  className="rounded-lg border border-rose-500/40 bg-rose-500/20 px-2 py-1 text-[11px] font-medium text-rose-200 hover:bg-rose-500/30"
+                >
+                  Выкл
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Live Voice Q&A Mode Status Bar (Gemini Live or Web Speech) */}
           {(qaMode || geminiLive.liveState !== "off" || geminiLive.liveError) && (
             <div className={`mx-auto mb-2.5 flex max-w-3xl items-center justify-between gap-2 rounded-xl border px-3 py-2 text-xs ${
@@ -1866,6 +2078,25 @@ export function ChatView({
                 </span>
               )}
               <AudioLines className="h-5 w-5" />
+            </button>
+
+            {/* Wake Word Standby Button */}
+            <button
+              type="button"
+              onClick={handleWakeToggle}
+              title={wakeMode ? `Выключить ожидание фразы «${wakeWord}»` : `Активация по кодовой фразе «${wakeWord}»`}
+              className={`relative flex h-10 w-10 sm:h-11 sm:w-11 shrink-0 items-center justify-center rounded-xl border transition active:scale-95 ${
+                wakeMode
+                  ? "border-amber-500 bg-amber-500/20 text-amber-300 shadow-lg shadow-amber-500/20"
+                  : "border-zinc-800 bg-zinc-900 text-zinc-300 hover:border-amber-500/60 hover:text-amber-400"
+              }`}
+            >
+              {wakeMode && (
+                <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
+                  <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-amber-400" />
+                </span>
+              )}
+              <Ear className="h-5 w-5" />
             </button>
 
             {/* Input Textarea */}
