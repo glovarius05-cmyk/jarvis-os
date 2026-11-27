@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { api, type MessageItem } from "../api/client";
 import type { LiveTurnState } from "../hooks/useChatSocket";
+import { isFemaleVoice, VOICE_CATALOG } from "../voiceCatalog";
 
 interface VoiceCallModalProps {
   isOpen: boolean;
@@ -286,7 +287,7 @@ export function VoiceCallModal({
       utter.lang = /[а-яА-ЯёЁ]/.test(text) ? "ru-RU" : "en-US";
 
       // Choose male voice and configure pitch for authentic masculine baritone
-      const isMale = !selectedVoice.includes("Svetlana") && selectedVoice !== "browser-female";
+      const isMale = !isFemaleVoice(selectedVoice);
       const voices = window.speechSynthesis.getVoices();
       const ruVoices = voices.filter((v) => v.lang.toLowerCase().startsWith("ru"));
 
@@ -808,8 +809,11 @@ export function VoiceCallModal({
                 className="rounded-lg border border-zinc-700 bg-zinc-800 px-2.5 py-1.5 text-xs text-zinc-300 outline-none focus:border-amber-500"
                 title="Выбор голоса синтеза речи"
               >
-                <option value="ru-RU-DmitryNeural">Голос: Дмитрий (Мужской, Edge Neural)</option>
-                <option value="ru-RU-SvetlanaNeural">Голос: Светлана (Женский, Edge Neural)</option>
+                {VOICE_CATALOG.map((v) => (
+                  <option key={v.id} value={v.id} title={v.styleHint}>
+                    {v.label}
+                  </option>
+                ))}
                 <option value="browser-male">Голос: Мужской баритон (Браузер)</option>
                 <option value="browser-female">Голос: Женский (Браузер)</option>
               </select>

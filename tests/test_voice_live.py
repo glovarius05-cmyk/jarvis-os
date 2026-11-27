@@ -59,3 +59,34 @@ def test_voice_stop_phrase_detection():
     assert _is_voice_stop_phrase("Всё, завершить разговор") is True
     assert _is_voice_stop_phrase("Stop conversation please") is True
     assert _is_voice_stop_phrase("Какая сегодня погода в Москве?") is False
+
+
+def test_voice_mapping_and_gender_persona(tmp_path: Path):
+    from app.api.routes.voice_live import _build_live_system_instruction, _resolve_live_voice
+    from app.voice.tts import resolve_edge_voice_and_pitch
+
+    # Gemini Live voice mapping (female Edge voice -> Aoede, male -> Charon, direct Gemini -> preserved)
+    assert _resolve_live_voice("ru-RU-SvetlanaNeural") == "Aoede"
+    assert _resolve_live_voice("ru-RU-DmitryNeural") == "Charon"
+    assert _resolve_live_voice("Kore") == "Kore"
+    assert _resolve_live_voice("Fenrir") == "Fenrir"
+    assert _resolve_live_voice("Zephyr") == "Zephyr"
+
+    # Edge TTS fallback preserves male/female + pitch distinction for all 12 voices
+    edge_v, edge_p = resolve_edge_voice_and_pitch("Kore")
+    assert edge_v == "ru-RU-SvetlanaNeural"
+    assert edge_p == "-8Hz"
+
+    edge_v2, edge_p2 = resolve_edge_voice_and_pitch("Umbriel")
+    assert edge_v2 == "ru-RU-DmitryNeural"
+    assert edge_p2 == "-14Hz"
+
+    ctr = AppContainer.build(
+        state_dir=tmp_path / "state",
+        brains_dir=tmp_path / "brains",
+        force_login=False,
+    )
+    fem_instr = _build_live_system_instruction(ctr, "Brain Default", voice_name="Aoede")
+    assert "женском роде" in fem_instr
+    male_instr = _build_live_system_instruction(ctr, "Brain Default", voice_name="Charon")
+    assert "мужском роде" in male_instr

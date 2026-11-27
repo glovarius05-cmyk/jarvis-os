@@ -28,6 +28,34 @@ def strip_markdown_for_tts(text: str) -> str:
     return s
 
 
+_GEMINI_TO_EDGE_MAP: dict[str, tuple[str, str]] = {
+    "charon": ("ru-RU-DmitryNeural", "+0Hz"),
+    "orus": ("ru-RU-DmitryNeural", "-10Hz"),
+    "umbriel": ("ru-RU-DmitryNeural", "-14Hz"),
+    "fenrir": ("ru-RU-DmitryNeural", "+6Hz"),
+    "puck": ("ru-RU-DmitryNeural", "+12Hz"),
+    "ru-ru-dmitryneural": ("ru-RU-DmitryNeural", "+0Hz"),
+    "aoede": ("ru-RU-SvetlanaNeural", "+0Hz"),
+    "callirrhoe": ("ru-RU-SvetlanaNeural", "+3Hz"),
+    "despina": ("ru-RU-SvetlanaNeural", "-4Hz"),
+    "kore": ("ru-RU-SvetlanaNeural", "-8Hz"),
+    "leda": ("ru-RU-SvetlanaNeural", "+10Hz"),
+    "zephyr": ("ru-RU-SvetlanaNeural", "+14Hz"),
+    "autonoe": ("ru-RU-SvetlanaNeural", "+8Hz"),
+    "erinome": ("ru-RU-SvetlanaNeural", "+2Hz"),
+    "ru-ru-svetlananeural": ("ru-RU-SvetlanaNeural", "+0Hz"),
+}
+
+
+def resolve_edge_voice_and_pitch(voice: str) -> tuple[str, str]:
+    key = (voice or "").strip().lower()
+    if key in _GEMINI_TO_EDGE_MAP:
+        return _GEMINI_TO_EDGE_MAP[key]
+    if key.endswith("neural"):
+        return voice.strip(), "+0Hz"
+    return "ru-RU-DmitryNeural", "+0Hz"
+
+
 async def synthesize_edge_tts(
     text: str,
     *,
@@ -44,12 +72,15 @@ async def synthesize_edge_tts(
     except ImportError:
         return None, "edge_tts_not_installed"
 
+    edge_voice, edge_pitch = resolve_edge_voice_and_pitch(voice)
     last_err = ""
     for attempt in range(3):
         try:
-            kwargs: dict[str, str] = {"voice": voice}
+            kwargs: dict[str, str] = {"voice": edge_voice}
             if rate and rate != "+0%" and attempt < 2:
                 kwargs["rate"] = rate
+            if edge_pitch and edge_pitch != "+0Hz" and attempt == 0:
+                kwargs["pitch"] = edge_pitch
             comm = edge_tts.Communicate(clean[:3000], **kwargs)
             buf = io.BytesIO()
             async for chunk in comm.stream():

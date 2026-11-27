@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { getSavedVoice } from "../voiceCatalog";
 
 export type GeminiLiveState = "off" | "connecting" | "listening" | "speaking";
 
@@ -167,7 +168,7 @@ export function useGeminiLive({ onTranscript }: UseGeminiLiveOptions = {}) {
   }, []);
 
   const startLive = useCallback(
-    async (sessionId?: string) => {
+    async (sessionId?: string, voice?: string) => {
       stopLive();
       setLiveError("");
       setLiveState("connecting");
@@ -191,7 +192,11 @@ export function useGeminiLive({ onTranscript }: UseGeminiLiveOptions = {}) {
         nextPlayTimeRef.current = playCtx.currentTime;
 
         const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-        const qs = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : "";
+        const params = new URLSearchParams();
+        if (sessionId) params.set("session_id", sessionId);
+        const chosenVoice = (voice || getSavedVoice()).trim();
+        if (chosenVoice) params.set("voice", chosenVoice);
+        const qs = params.toString() ? `?${params.toString()}` : "";
         const ws = new WebSocket(`${proto}//${window.location.host}/ws/voice/live${qs}`);
         wsRef.current = ws;
 

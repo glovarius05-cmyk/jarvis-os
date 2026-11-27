@@ -60,11 +60,59 @@ def _is_voice_stop_phrase(text: str) -> bool:
     return any(p in norm for p in _VOICE_STOP_PHRASES)
 
 
-def _build_live_system_instruction(container: AppContainer, brain: str) -> str:
+_FEMALE_LIVE_VOICES = {
+    "aoede",
+    "kore",
+    "leda",
+    "zephyr",
+    "despina",
+    "autonoe",
+    "erinome",
+    "callirrhoe",
+}
+
+_VOICE_ALIAS_TO_GEMINI: dict[str, str] = {
+    "charon": "Charon",
+    "orus": "Orus",
+    "fenrir": "Fenrir",
+    "puck": "Puck",
+    "umbriel": "Umbriel",
+    "aoede": "Aoede",
+    "kore": "Kore",
+    "leda": "Leda",
+    "zephyr": "Zephyr",
+    "despina": "Despina",
+    "autonoe": "Autonoe",
+    "erinome": "Erinome",
+    "callirrhoe": "Callirrhoe",
+    "ru-ru-dmitryneural": "Charon",
+    "ru-ru-svetlananeural": "Aoede",
+    "ru-ru-dariyaneural": "Despina",
+    "browser-female": "Aoede",
+    "browser-male": "Charon",
+}
+
+
+def _resolve_live_voice(requested_voice: str) -> str:
+    key = (requested_voice or "").strip().lower()
+    if key in _VOICE_ALIAS_TO_GEMINI:
+        return _VOICE_ALIAS_TO_GEMINI[key]
+    if "svetlana" in key or "dariya" in key or "female" in key:
+        return "Aoede"
+    return "Charon"
+
+
+def _build_live_system_instruction(container: AppContainer, brain: str, voice_name: str = "Charon") -> str:
     now_utc = datetime.now(timezone.utc)
     now_msk = now_utc.astimezone(timezone(timedelta(hours=3)))
+    is_female = voice_name.lower() in _FEMALE_LIVE_VOICES
+    persona_line = (
+        "Ты Jarvis - персональный голосовой ИИ-ассистент с женским голосом; говори о себе в женском роде («я нашла», «я готова», «рада помочь»)."
+        if is_female
+        else "Ты Jarvis - персональный голосовой ИИ-ассистент; говори о себе в мужском роде («я нашёл», «я готов», «рад помочь»)."
+    )
     parts = [
-        "Ты Jarvis - персональный голосовой ИИ-ассистент.",
+        persona_line,
         f"Текущая дата и время: {now_msk.strftime('%Y-%m-%d %H:%M')} (MSK, UTC+3) / {now_utc.strftime('%Y-%m-%d %H:%M')} UTC.",
         "Отвечай естественно, кратко и по делу (1-3 предложения, если пользователь не просит подробностей).",
         "Говори на языке пользователя (обычно на русском).",
@@ -174,13 +222,15 @@ async def ws_voice_live(websocket: WebSocket) -> None:
         return
 
     session_id = str(websocket.query_params.get("session_id") or "").strip()
-    voice_name = str(websocket.query_params.get("voice") or "Charon").strip() or "Charon"
+    saved_voice = str((container.settings.load().get("voice") or {}).get("tts_voice") or "")
+    requested_voice = str(websocket.query_params.get("voice") or saved_voice or "Charon").strip()
+    voice_name = _resolve_live_voice(requested_voice)
     model = str(websocket.query_params.get("model") or DEFAULT_GEMINI_LIVE_MODEL).strip()
     if not model.startswith("models/"):
         model = f"models/{model}"
 
     active_brain = container.settings.load_public().get("active_brain", "Brain Default")
-    system_prompt = _build_live_system_instruction(container, active_brain)
+    system_prompt = _build_live_system_instruction(container, active_brain, voice_name=voice_name)
     ws_url = f"{GEMINI_LIVE_WS_BASE}?key={quote(api_key, safe='')}"
 
     user_buf: list[str] = []

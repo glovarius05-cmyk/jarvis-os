@@ -44,6 +44,7 @@ import {
 } from "../api/client";
 import type { LiveTurnState } from "../hooks/useChatSocket";
 import { useGeminiLive } from "../hooks/useGeminiLive";
+import { getSavedVoice, isFemaleVoice, VOICE_CATALOG } from "../voiceCatalog";
 import { MarkdownText } from "./MarkdownText";
 
 export interface AttachedFileItem {
@@ -236,6 +237,9 @@ export function ChatView({
   const [editingWakeWord, setEditingWakeWord] = useState(false);
   const [wakeHeard, setWakeHeard] = useState("");
   const [wakeError, setWakeError] = useState("");
+  const [selectedVoice, setSelectedVoice] = useState<string>(() => getSavedVoice());
+  const selectedVoiceRef = useRef(selectedVoice);
+  selectedVoiceRef.current = selectedVoice;
   const wakeModeRef = useRef(wakeMode);
   const wakeWordRef = useRef(wakeWord);
   wakeWordRef.current = wakeWord;
@@ -432,8 +436,8 @@ export function ChatView({
       const utter = new SpeechSynthesisUtterance(text);
       utter.lang = /[а-яА-ЯёЁ]/.test(text) ? "ru-RU" : "en-US";
 
-      const savedVoice = localStorage.getItem("jarvis_selected_voice") || "ru-RU-DmitryNeural";
-      const isMale = !savedVoice.includes("Svetlana") && savedVoice !== "browser-female";
+      const savedVoice = selectedVoiceRef.current || getSavedVoice();
+      const isMale = !isFemaleVoice(savedVoice);
       const voices = window.speechSynthesis.getVoices();
       const ruVoices = voices.filter((v) => v.lang.toLowerCase().startsWith("ru"));
 
@@ -479,7 +483,7 @@ export function ChatView({
       stopSpeech();
       setLoadingAudioId(messageId);
       try {
-        const savedVoice = localStorage.getItem("jarvis_selected_voice") || "ru-RU-DmitryNeural";
+        const savedVoice = selectedVoiceRef.current || getSavedVoice();
         const res = await api.synthesizeTTS(text, savedVoice);
         setLoadingAudioId(null);
         if (res.audioUrl) {
@@ -856,7 +860,7 @@ export function ChatView({
         setSelectedId(sid);
         await loadSessions();
       }
-      await geminiLive.startLive(sid);
+      await geminiLive.startLive(sid, selectedVoiceRef.current);
       return;
     }
     qaModeRef.current = true;
@@ -1648,6 +1652,30 @@ export function ChatView({
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3">
+            <select
+              value={selectedVoice}
+              onChange={(e) => {
+                const v = e.target.value;
+                setSelectedVoice(v);
+                selectedVoiceRef.current = v;
+                try {
+                  localStorage.setItem("jarvis_selected_voice", v);
+                } catch {}
+                void api.patchSettings({ voice: { tts_voice: v } }).catch(() => {});
+                if (geminiLive.liveState !== "off") {
+                  void geminiLive.startLive(selectedIdRef.current || undefined, v);
+                }
+              }}
+              title="Голос Jarvis (работает и в Gemini Live, и в обычной озвучке)"
+              className="max-w-[140px] sm:max-w-[210px] truncate rounded-lg border border-zinc-800 bg-zinc-900 px-2 py-1.5 text-xs font-medium text-zinc-200 outline-none transition hover:border-zinc-700 focus:border-amber-500"
+            >
+              {VOICE_CATALOG.map((v) => (
+                <option key={v.id} value={v.id} title={v.styleHint}>
+                  🎙️ {v.label}
+                </option>
+              ))}
+            </select>
+
             <button
               type="button"
               onClick={() => {

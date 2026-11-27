@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { CheckCircle2, Mic, Send, Volume2 } from "lucide-react";
 import { api } from "../api/client";
+import { getSavedVoice, isFemaleVoice, VOICE_CATALOG } from "../voiceCatalog";
 
 export function ChannelsView() {
   const [tgEnabled, setTgEnabled] = useState(false);
@@ -14,17 +15,30 @@ export function ChannelsView() {
   } | null>(null);
   const [tgTestResult, setTgTestResult] = useState("");
 
-  const [ttsVoice, setTtsVoice] = useState("ru-RU-DmitryNeural");
+  const [ttsVoice, setTtsVoice] = useState(() => getSavedVoice());
   const [ttsRate, setTtsRate] = useState("+5%");
   const [voiceInput, setVoiceInput] = useState("");
   const [voiceReply, setVoiceReply] = useState("");
   const [savedNotice, setSavedNotice] = useState(false);
 
   const refresh = useCallback(async () => {
-    const st = await api.getTelegramStatus();
+    const [st, settings] = await Promise.all([
+      api.getTelegramStatus(),
+      api.getSettings().catch(() => null),
+    ]);
     setTgStatus(st);
     setTgEnabled(st.enabled);
     setTgChatIds(st.allowed_chat_ids.join(", "));
+    const voiceCfg = (settings as { voice?: { tts_voice?: string; tts_rate?: string } } | null)?.voice;
+    if (voiceCfg?.tts_voice) {
+      setTtsVoice(voiceCfg.tts_voice);
+      try {
+        localStorage.setItem("jarvis_selected_voice", voiceCfg.tts_voice);
+      } catch {}
+    }
+    if (voiceCfg?.tts_rate) {
+      setTtsRate(voiceCfg.tts_rate);
+    }
   }, []);
 
   useEffect(() => {
@@ -81,7 +95,7 @@ export function ChannelsView() {
       if ("speechSynthesis" in window) {
         const utter = new SpeechSynthesisUtterance(res.spoken_text);
         utter.lang = /[а-яА-ЯёЁ]/.test(res.spoken_text) ? "ru-RU" : "en-US";
-        if (!ttsVoice.includes("Svetlana") && ttsVoice !== "browser-female") {
+        if (!isFemaleVoice(ttsVoice)) {
           utter.pitch = 0.82;
         }
         window.speechSynthesis.speak(utter);
@@ -179,11 +193,20 @@ export function ChannelsView() {
         <form onSubmit={handleSaveVoice} className="grid gap-3 sm:grid-cols-3">
           <select
             value={ttsVoice}
-            onChange={(e) => setTtsVoice(e.target.value)}
+            onChange={(e) => {
+              const v = e.target.value;
+              setTtsVoice(v);
+              try {
+                localStorage.setItem("jarvis_selected_voice", v);
+              } catch {}
+            }}
             className="rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 font-mono text-xs text-zinc-100"
           >
-            <option value="ru-RU-DmitryNeural">ru-RU-DmitryNeural (Мужской - Дмитрий)</option>
-            <option value="ru-RU-SvetlanaNeural">ru-RU-SvetlanaNeural (Женский - Светлана)</option>
+            {VOICE_CATALOG.map((v) => (
+              <option key={v.id} value={v.id} title={v.styleHint}>
+                {v.label}
+              </option>
+            ))}
             <option value="browser-male">browser-male (Мужской баритон, Браузер)</option>
             <option value="browser-female">browser-female (Женский, Браузер)</option>
           </select>
