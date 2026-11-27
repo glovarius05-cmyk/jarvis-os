@@ -68,7 +68,7 @@ def _build_live_system_instruction(container: AppContainer, brain: str) -> str:
         f"Текущая дата и время: {now_msk.strftime('%Y-%m-%d %H:%M')} (MSK, UTC+3) / {now_utc.strftime('%Y-%m-%d %H:%M')} UTC.",
         "Отвечай естественно, кратко и по делу (1-3 предложения, если пользователь не просит подробностей).",
         "Говори на языке пользователя (обычно на русском).",
-        "Если вопрос касается актуальных событий, новостей, курсов, погоды или информации на сегодня - используй Google Search или инструменты браузера (jarvis_browser_navigate / jarvis_browser_task).",
+        "Если вопрос касается актуальных событий, новостей, курсов, погоды или информации на сегодня - используй инструменты web_search / web_fetch / jarvis_browser_navigate / jarvis_browser_task.",
         "Если пользователь просит закончить или завершить голосовой разговор (например, 'закончим разговор', 'завершить', 'отбой', 'пока'), сразу вызови инструмент end_voice_conversation.",
     ]
     try:
@@ -82,12 +82,33 @@ def _build_live_system_instruction(container: AppContainer, brain: str) -> str:
 
 def _build_live_tools() -> list[dict[str, Any]]:
     return [
-        {"googleSearch": {}},
         {
             "functionDeclarations": [
                 {
+                    "name": "web_search",
+                    "description": "Search the public web for up-to-date information, news, weather, prices, and events.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string", "description": "Search query"},
+                        },
+                        "required": ["query"],
+                    },
+                },
+                {
+                    "name": "web_fetch",
+                    "description": "Fetch a public webpage URL and return readable text.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "url": {"type": "string", "description": "Webpage URL to read"},
+                        },
+                        "required": ["url"],
+                    },
+                },
+                {
                     "name": "jarvis_browser_navigate",
-                    "description": "Open a specific webpage URL and extract its title and text content.",
+                    "description": "Open a specific webpage URL in the browser agent and extract its title and content.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -98,7 +119,7 @@ def _build_live_tools() -> list[dict[str, Any]]:
                 },
                 {
                     "name": "jarvis_browser_task",
-                    "description": "Autonomous browser agent for multi-step web tasks (clicking, forms, SPA pages).",
+                    "description": "Autonomous browser agent for multi-step interactive web tasks.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -116,6 +137,7 @@ def _build_live_tools() -> list[dict[str, Any]]:
                         "properties": {
                             "reason": {"type": "string", "description": "Short reason why conversation ended"},
                         },
+                        "required": ["reason"],
                     },
                 },
             ]
@@ -180,9 +202,12 @@ async def ws_voice_live(websocket: WebSocket) -> None:
             logger.debug("Failed to persist live voice transcript: %s", exc)
 
     try:
-        async with websockets.connect(ws_url, max_size=8 * 1024 * 1024) as gemini_ws:
-            setup_msg = {
-                "setup": {
+        setup_complete = False
+        for with_tools in (True, False):
+            setup_complete = False
+            tool_pending = False
+            async with websockets.connect(ws_url, max_size=8 * 1024 * 1024) as gemini_ws:
+                setup_inner: dict[str, Any] = {
                     "model": model,
                     "generationConfig": {
                         "responseModalities": ["AUDIO"],
@@ -197,155 +222,170 @@ async def ws_voice_live(websocket: WebSocket) -> None:
                     "systemInstruction": {
                         "parts": [{"text": system_prompt}],
                     },
-                    "tools": _build_live_tools(),
                     "inputAudioTranscription": {},
                     "outputAudioTranscription": {},
                 }
-            }
-            await gemini_ws.send(json.dumps(setup_msg))
+                if with_tools:
+                    setup_inner["tools"] = _build_live_tools()
+                await gemini_ws.send(json.dumps({"setup": setup_inner}))
 
-            async def _browser_to_gemini() -> None:
-                while True:
-                    raw = await websocket.receive_text()
-                    msg = json.loads(raw)
-                    mtype = msg.get("type")
-                    if mtype == "audio":
-                        b64 = msg.get("data") or ""
-                        if b64:
-                            await gemini_ws.send(
-                                json.dumps(
-                                    {
-                                        "realtimeInput": {
-                                            "mediaChunks": [
-                                                {
-                                                    "mimeType": "audio/pcm;rate=16000",
-                                                    "data": b64,
-                                                }
-                                            ]
-                                        }
-                                    }
-                                )
-                            )
-                    elif mtype == "text":
-                        text = str(msg.get("text") or "").strip()
-                        if text:
-                            await gemini_ws.send(
-                                json.dumps(
-                                    {
-                                        "clientContent": {
-                                            "turns": [{"role": "user", "parts": [{"text": text}]}],
-                                            "turnComplete": True,
-                                        }
-                                    }
-                                )
-                            )
-                    elif mtype == "ping":
-                        await websocket.send_json({"type": "pong"})
-                    elif mtype == "stop":
-                        break
-
-            async def _gemini_to_browser() -> None:
-                async for raw in gemini_ws:
-                    data = json.loads(raw)
-                    if "setupComplete" in data:
-                        await websocket.send_json({"type": "ready"})
-                        continue
-
-                    tool_call = data.get("toolCall")
-                    if isinstance(tool_call, dict):
-                        fcalls = tool_call.get("functionCalls") or []
-                        responses: list[dict[str, Any]] = []
-                        for fc in fcalls:
-                            if not isinstance(fc, dict):
+                async def _browser_to_gemini() -> None:
+                    while True:
+                        raw = await websocket.receive_text()
+                        msg = json.loads(raw)
+                        mtype = msg.get("type")
+                        if mtype == "audio":
+                            if tool_pending:
                                 continue
-                            fc_id = str(fc.get("id") or "")
-                            fc_name = str(fc.get("name") or "")
-                            fc_args = fc.get("args") if isinstance(fc.get("args"), dict) else {}
-                            if fc_name == "end_voice_conversation":
-                                _flush_transcripts()
-                                await websocket.send_json({"type": "end_conversation", "reason": "tool_call"})
-                                return
-                            await websocket.send_json({"type": "tool", "name": fc_name, "status": "running"})
+                            b64 = msg.get("data") or ""
+                            if b64:
+                                await gemini_ws.send(
+                                    json.dumps(
+                                        {
+                                            "realtimeInput": {
+                                                "mediaChunks": [
+                                                    {
+                                                        "mimeType": "audio/pcm;rate=16000",
+                                                        "data": b64,
+                                                    }
+                                                ]
+                                            }
+                                        }
+                                    )
+                                )
+                        elif mtype == "text":
+                            text = str(msg.get("text") or "").strip()
+                            if text:
+                                await gemini_ws.send(
+                                    json.dumps(
+                                        {
+                                            "clientContent": {
+                                                "turns": [{"role": "user", "parts": [{"text": text}]}],
+                                                "turnComplete": True,
+                                            }
+                                        }
+                                    )
+                                )
+                        elif mtype == "ping":
+                            await websocket.send_json({"type": "pong"})
+                        elif mtype == "stop":
+                            break
+
+                async def _gemini_to_browser() -> None:
+                    nonlocal setup_complete, tool_pending
+                    async for raw in gemini_ws:
+                        data = json.loads(raw)
+                        if "setupComplete" in data:
+                            setup_complete = True
+                            await websocket.send_json({"type": "ready"})
+                            continue
+
+                        tool_call = data.get("toolCall")
+                        if isinstance(tool_call, dict):
+                            tool_pending = True
                             try:
-                                result = await container.hub.call_tool(
-                                    brain=active_brain,
-                                    name=fc_name,
-                                    args=fc_args,
-                                    run_mode="full",
-                                    session_id=session_id or "voice-live",
-                                )
-                            except Exception as exc:  # noqa: BLE001
-                                result = f"Tool error: {exc}"
-                            await websocket.send_json({"type": "tool", "name": fc_name, "status": "done"})
-                            responses.append(
-                                {
-                                    "id": fc_id,
-                                    "name": fc_name,
-                                    "response": {"result": str(result)[:12000]},
-                                }
-                            )
-                        if responses:
-                            await gemini_ws.send(json.dumps({"toolResponse": {"functionResponses": responses}}))
-                        continue
-
-                    sc = data.get("serverContent")
-                    if not isinstance(sc, dict):
-                        continue
-
-                    if sc.get("interrupted"):
-                        _flush_transcripts()
-                        await websocket.send_json({"type": "interrupted"})
-
-                    in_tr = sc.get("inputTranscription")
-                    if isinstance(in_tr, dict) and in_tr.get("text"):
-                        txt = str(in_tr["text"])
-                        user_buf.append(txt)
-                        await websocket.send_json({"type": "transcript", "role": "user", "text": txt})
-                        if _is_voice_stop_phrase("".join(user_buf)):
-                            _flush_transcripts()
-                            await websocket.send_json({"type": "end_conversation", "reason": "voice_stop"})
-                            return
-
-                    out_tr = sc.get("outputTranscription")
-                    if isinstance(out_tr, dict) and out_tr.get("text"):
-                        txt = str(out_tr["text"])
-                        assistant_buf.append(txt)
-                        await websocket.send_json({"type": "transcript", "role": "assistant", "text": txt})
-
-                    mt = sc.get("modelTurn")
-                    if isinstance(mt, dict):
-                        for part in mt.get("parts") or []:
-                            inline = part.get("inlineData") if isinstance(part, dict) else None
-                            if isinstance(inline, dict) and inline.get("data"):
-                                mime = str(inline.get("mimeType") or "audio/pcm;rate=24000")
-                                rate = 24000
-                                if "rate=" in mime:
+                                fcalls = tool_call.get("functionCalls") or []
+                                responses: list[dict[str, Any]] = []
+                                for fc in fcalls:
+                                    if not isinstance(fc, dict):
+                                        continue
+                                    fc_id = str(fc.get("id") or "")
+                                    fc_name = str(fc.get("name") or "")
+                                    fc_args = fc.get("args") if isinstance(fc.get("args"), dict) else {}
+                                    if fc_name == "end_voice_conversation":
+                                        _flush_transcripts()
+                                        await websocket.send_json({"type": "end_conversation", "reason": "tool_call"})
+                                        return
+                                    await websocket.send_json({"type": "tool", "name": fc_name, "status": "running"})
                                     try:
-                                        rate = int(mime.split("rate=")[1].split(";")[0])
-                                    except ValueError:
-                                        rate = 24000
-                                await websocket.send_json(
-                                    {
-                                        "type": "audio",
-                                        "data": inline["data"],
-                                        "rate": rate,
-                                    }
-                                )
+                                        result = await container.hub.call_tool(
+                                            brain=active_brain,
+                                            name=fc_name,
+                                            args=fc_args,
+                                            run_mode="full",
+                                            session_id=session_id or "voice-live",
+                                        )
+                                    except Exception as exc:  # noqa: BLE001
+                                        result = f"Tool error: {exc}"
+                                    await websocket.send_json({"type": "tool", "name": fc_name, "status": "done"})
+                                    responses.append(
+                                        {
+                                            "id": fc_id,
+                                            "name": fc_name,
+                                            "response": {"result": str(result)[:12000]},
+                                        }
+                                    )
+                                if responses:
+                                    await gemini_ws.send(json.dumps({"toolResponse": {"functionResponses": responses}}))
+                            finally:
+                                tool_pending = False
+                            continue
 
-                    if sc.get("turnComplete"):
-                        _flush_transcripts()
-                        await websocket.send_json({"type": "turn_complete"})
+                        sc = data.get("serverContent")
+                        if not isinstance(sc, dict):
+                            continue
 
-            t_in = asyncio.create_task(_browser_to_gemini())
-            t_out = asyncio.create_task(_gemini_to_browser())
-            done, pending = await asyncio.wait({t_in, t_out}, return_when=asyncio.FIRST_COMPLETED)
-            for p in pending:
-                p.cancel()
-            await asyncio.gather(*pending, return_exceptions=True)
-            for d in done:
-                exc = d.exception()
-                if exc and not isinstance(exc, (WebSocketDisconnect, asyncio.CancelledError)):
-                    raise exc
+                        if sc.get("interrupted"):
+                            _flush_transcripts()
+                            await websocket.send_json({"type": "interrupted"})
+
+                        in_tr = sc.get("inputTranscription")
+                        if isinstance(in_tr, dict) and in_tr.get("text"):
+                            txt = str(in_tr["text"])
+                            user_buf.append(txt)
+                            await websocket.send_json({"type": "transcript", "role": "user", "text": txt})
+                            if _is_voice_stop_phrase("".join(user_buf)):
+                                _flush_transcripts()
+                                await websocket.send_json({"type": "end_conversation", "reason": "voice_stop"})
+                                return
+
+                        out_tr = sc.get("outputTranscription")
+                        if isinstance(out_tr, dict) and out_tr.get("text"):
+                            txt = str(out_tr["text"])
+                            assistant_buf.append(txt)
+                            await websocket.send_json({"type": "transcript", "role": "assistant", "text": txt})
+
+                        mt = sc.get("modelTurn")
+                        if isinstance(mt, dict):
+                            for part in mt.get("parts") or []:
+                                inline = part.get("inlineData") if isinstance(part, dict) else None
+                                if isinstance(inline, dict) and inline.get("data"):
+                                    mime = str(inline.get("mimeType") or "audio/pcm;rate=24000")
+                                    rate = 24000
+                                    if "rate=" in mime:
+                                        try:
+                                            rate = int(mime.split("rate=")[1].split(";")[0])
+                                        except ValueError:
+                                            rate = 24000
+                                    await websocket.send_json(
+                                        {
+                                            "type": "audio",
+                                            "data": inline["data"],
+                                            "rate": rate,
+                                        }
+                                    )
+
+                        if sc.get("turnComplete"):
+                            _flush_transcripts()
+                            await websocket.send_json({"type": "turn_complete"})
+
+                try:
+                    t_in = asyncio.create_task(_browser_to_gemini())
+                    t_out = asyncio.create_task(_gemini_to_browser())
+                    done, pending = await asyncio.wait({t_in, t_out}, return_when=asyncio.FIRST_COMPLETED)
+                    for p in pending:
+                        p.cancel()
+                    await asyncio.gather(*pending, return_exceptions=True)
+                    for d in done:
+                        exc = d.exception()
+                        if exc and not isinstance(exc, (WebSocketDisconnect, asyncio.CancelledError)):
+                            raise exc
+                    break
+                except Exception as inner_exc:
+                    if with_tools and not setup_complete and ("1008" in str(inner_exc) or "policy" in str(inner_exc).lower()):
+                        logger.warning("Gemini Live rejected tools with 1008 during setup, retrying without tools: %s", inner_exc)
+                        continue
+                    raise
     except WebSocketDisconnect:
         pass
     except Exception as exc:  # noqa: BLE001

@@ -43,9 +43,10 @@ def test_voice_live_tools_and_date_instruction(tmp_path: Path):
     assert "MSK" in instr
 
     tools = _build_live_tools()
-    assert any("googleSearch" in t for t in tools)
     fn_decls = next(t["functionDeclarations"] for t in tools if "functionDeclarations" in t)
     names = {f["name"] for f in fn_decls}
+    assert "web_search" in names
+    assert "web_fetch" in names
     assert "jarvis_browser_navigate" in names
     assert "jarvis_browser_task" in names
     assert "end_voice_conversation" in names

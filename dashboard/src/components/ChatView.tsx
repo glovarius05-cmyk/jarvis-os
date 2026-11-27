@@ -996,7 +996,12 @@ export function ChatView({
             const txt = (res.text || "").trim();
             if (!txt) return;
             const { matched, norm } = matchWakePhrase(txt);
-            setWakeHeard(norm.slice(-60));
+            const isHallucination = /динамичная музыка|веселая музыка|субтитры|редактор субтитров|продолжение следует|thanks for watching/.test(
+              norm
+            );
+            if (!isHallucination) {
+              setWakeHeard(norm.slice(-60));
+            }
             if (matched && !wakeTriggeredRef.current) {
               wakeTriggeredRef.current = true;
               cleanup();
@@ -1024,7 +1029,7 @@ export function ChatView({
         for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
         const rms = Math.sqrt(sum / buf.length);
         const now = performance.now();
-        if (rms > 0.025 && !recording && now - lastLoudAt > 300) {
+        if (rms > 0.045 && !recording && now - lastLoudAt > 350) {
           lastLoudAt = now;
           triggerClip();
         }
