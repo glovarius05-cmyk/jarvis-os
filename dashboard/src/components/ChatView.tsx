@@ -890,6 +890,7 @@ export function ChatView({
 
   const wakeRestartTimerRef = useRef<number | null>(null);
   const wakeTriggeredRef = useRef(false);
+  const wasInDialogRef = useRef(false);
   const wakeFallbackStopRef = useRef<(() => void) | null>(null);
   const useWakeFallbackRef = useRef(false);
 
@@ -1149,6 +1150,14 @@ export function ChatView({
   }, [matchWakePhrase, playActivationChime, startMediaRecorderWakeFallback, stopWakeRecognition]);
 
   useEffect(() => {
+    const inDialog = qaMode || geminiLive.liveState !== "off";
+    if (inDialog) {
+      wasInDialogRef.current = true;
+    } else if (wasInDialogRef.current) {
+      wasInDialogRef.current = false;
+      wakeTriggeredRef.current = false;
+    }
+
     const shouldListenWake = wakeMode && !qaMode && geminiLive.liveState === "off" && !listening;
     if (!shouldListenWake) {
       if (wakeRestartTimerRef.current !== null) {
@@ -1158,12 +1167,12 @@ export function ChatView({
       stopWakeRecognition();
       return;
     }
-    if (!wakeRecRef.current && !wakeTriggeredRef.current) {
+    if (!wakeRecRef.current && !wakeFallbackStopRef.current && !wakeTriggeredRef.current) {
       const t = window.setTimeout(() => {
         startWakeListener();
-      }, 350);
+      }, 450);
       const onFirstGesture = () => {
-        if (wakeModeRef.current && !wakeRecRef.current && !wakeFallbackStopRef.current) {
+        if (wakeModeRef.current && !wakeRecRef.current && !wakeFallbackStopRef.current && !wakeTriggeredRef.current) {
           startWakeListener();
         }
       };
