@@ -1466,14 +1466,15 @@ export function ChatView({
       {/* Main Chat Area */}
       <section className="flex min-w-0 flex-1 flex-col bg-zinc-950">
         {/* Top bar with quick brain/model switcher */}
-        <header className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-800 px-3 py-2 sm:gap-3 sm:px-5 sm:py-3">
-          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5 sm:gap-2">
+        <header className="flex flex-col gap-1.5 border-b border-zinc-800 px-3 py-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-3 sm:px-5 sm:py-3">
+          {/* Mobile row 1 / Desktop left */}
+          <div className="flex w-full min-w-0 items-center gap-1.5 sm:w-auto sm:flex-1 sm:flex-wrap sm:gap-2">
             {/* Mobile Sessions Drawer & Quick New Chat */}
             <button
               type="button"
               onClick={() => setMobileSessionsOpen(true)}
               aria-label="История чатов"
-              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-zinc-800 bg-zinc-900 text-zinc-300 hover:border-amber-500/50 md:hidden"
+              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-zinc-800 bg-zinc-900 text-zinc-300 hover:border-amber-500/50 md:hidden"
             >
               <History className="h-4 w-4" />
             </button>
@@ -1481,7 +1482,7 @@ export function ChatView({
               type="button"
               onClick={() => void handleNewChat()}
               aria-label={t("chat.new")}
-              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-amber-500 text-zinc-950 hover:bg-amber-400 md:hidden"
+              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amber-500 text-zinc-950 hover:bg-amber-400 md:hidden"
             >
               <Plus className="h-4 w-4" />
             </button>
@@ -1503,7 +1504,7 @@ export function ChatView({
                 }
               }}
               title="Выберите модель ИИ"
-              className="min-w-0 max-w-[200px] sm:max-w-[340px] flex-1 sm:flex-initial truncate rounded-lg border border-zinc-800 bg-zinc-900 px-2.5 py-1.5 font-mono text-xs font-medium text-zinc-100 outline-none transition hover:border-zinc-700 focus:border-amber-500 sm:px-3"
+              className="h-9 sm:h-auto min-w-0 flex-1 sm:flex-initial sm:max-w-[340px] truncate rounded-lg border border-zinc-800 bg-zinc-900 px-2.5 py-1.5 font-mono text-xs font-medium text-zinc-100 outline-none transition hover:border-zinc-700 focus:border-amber-500 sm:px-3"
             >
               {selectableProviders.map((p) => {
                 const icon =
@@ -1542,9 +1543,9 @@ export function ChatView({
               </optgroup>
             </select>
 
-            {/* Active Provider Status Badge */}
+            {/* Active Provider Status Badge (desktop only) */}
             <span
-              className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium ${
+              className={`hidden sm:inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium ${
                 activeProviderSpec?.ready
                   ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
                   : "border-zinc-800 bg-zinc-900 text-zinc-400"
@@ -1562,12 +1563,12 @@ export function ChatView({
                   value={model}
                   onChange={(e) => setModel(e.target.value)}
                   placeholder="vendor/model-name:free"
-                  className="w-56 rounded-lg border border-amber-500/50 bg-zinc-950 px-2.5 py-1.5 font-mono text-xs text-zinc-100 outline-none focus:border-amber-500"
+                  className="w-36 sm:w-56 rounded-lg border border-amber-500/50 bg-zinc-950 px-2.5 py-1.5 font-mono text-xs text-zinc-100 outline-none focus:border-amber-500"
                 />
                 <select
                   value={provider}
                   onChange={(e) => setProvider(e.target.value)}
-                  className="rounded-lg border border-zinc-800 bg-zinc-900 px-2 py-1.5 text-xs text-zinc-300 outline-none focus:border-amber-500"
+                  className="hidden sm:block rounded-lg border border-zinc-800 bg-zinc-900 px-2 py-1.5 text-xs text-zinc-300 outline-none focus:border-amber-500"
                 >
                   {selectableProviders.map((p) => (
                     <option key={p.id} value={p.id}>
@@ -1578,11 +1579,55 @@ export function ChatView({
               </div>
             )}
 
+            <div className="hidden sm:block">
+              <select
+                value={runMode}
+                onChange={(e) => setRunMode(e.target.value as "suggest" | "auto" | "full" | "consensus" | "debate")}
+                title="Режим работы и координации моделей"
+                className={`rounded-lg border px-2.5 py-1.5 text-xs font-medium outline-none transition ${
+                  runMode === "consensus"
+                    ? "border-emerald-500/50 bg-emerald-950/40 text-emerald-300"
+                    : runMode === "debate"
+                    ? "border-purple-500/50 bg-purple-950/40 text-purple-300"
+                    : "border-zinc-800 bg-zinc-900 text-amber-300 focus:border-amber-500"
+                }`}
+              >
+                <option value="full">Mode: ⚡ full (MCP tools)</option>
+                <option value="auto">Mode: 🛡️ auto (safe)</option>
+                <option value="suggest">Mode: 👁️ suggest (readonly)</option>
+                <option value="consensus">Mode: 🤝 Consensus (Multi-AI)</option>
+                <option value="debate">Mode: ⚔️ Debate (Multi-AI)</option>
+              </select>
+            </div>
+
+            {/* Mobile inline Auto-Speak + WS status */}
+            <button
+              type="button"
+              onClick={() => {
+                const next = !autoSpeak;
+                setAutoSpeak(next);
+                try {
+                  localStorage.setItem("jarvis_chat_auto_speak", String(next));
+                } catch {}
+              }}
+              title={autoSpeak ? "Auto-Speak enabled" : "Auto-Speak disabled"}
+              className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border transition sm:hidden ${
+                autoSpeak
+                  ? "border-amber-500/50 bg-amber-500/15 text-amber-300"
+                  : "border-zinc-800 bg-zinc-900 text-zinc-400"
+              }`}
+            >
+              <Volume2 className={`h-4 w-4 ${autoSpeak ? "text-amber-400" : "text-zinc-500"}`} />
+            </button>
+          </div>
+
+          {/* Mobile row 2 (equal 50/50 full-width controls) / Desktop right */}
+          <div className="grid w-full grid-cols-2 gap-1.5 sm:flex sm:w-auto sm:items-center sm:gap-3">
             <select
               value={runMode}
               onChange={(e) => setRunMode(e.target.value as "suggest" | "auto" | "full" | "consensus" | "debate")}
               title="Режим работы и координации моделей"
-              className={`rounded-lg border px-2.5 py-1.5 text-xs font-medium outline-none transition ${
+              className={`h-9 w-full truncate rounded-lg border px-2.5 py-1.5 text-xs font-medium outline-none transition sm:hidden ${
                 runMode === "consensus"
                   ? "border-emerald-500/50 bg-emerald-950/40 text-emerald-300"
                   : runMode === "debate"
@@ -1590,15 +1635,13 @@ export function ChatView({
                   : "border-zinc-800 bg-zinc-900 text-amber-300 focus:border-amber-500"
               }`}
             >
-              <option value="full">Mode: ⚡ full (MCP tools)</option>
-              <option value="auto">Mode: 🛡️ auto (safe)</option>
-              <option value="suggest">Mode: 👁️ suggest (readonly)</option>
-              <option value="consensus">Mode: 🤝 Consensus (Multi-AI)</option>
-              <option value="debate">Mode: ⚔️ Debate (Multi-AI)</option>
+              <option value="full">⚡ full (MCP)</option>
+              <option value="auto">🛡️ auto</option>
+              <option value="suggest">👁️ suggest</option>
+              <option value="consensus">🤝 Consensus</option>
+              <option value="debate">⚔️ Debate</option>
             </select>
-          </div>
 
-          <div className="flex items-center gap-2 sm:gap-3">
             <select
               value={selectedVoice}
               onChange={(e) => {
@@ -1614,7 +1657,7 @@ export function ChatView({
                 }
               }}
               title="Голос Jarvis (работает и в Gemini Live, и в обычной озвучке)"
-              className="max-w-[140px] sm:max-w-[210px] truncate rounded-lg border border-zinc-800 bg-zinc-900 px-2 py-1.5 text-xs font-medium text-zinc-200 outline-none transition hover:border-zinc-700 focus:border-amber-500"
+              className="h-9 sm:h-auto w-full sm:w-auto sm:max-w-[210px] truncate rounded-lg border border-zinc-800 bg-zinc-900 px-2 py-1.5 text-xs font-medium text-zinc-200 outline-none transition hover:border-zinc-700 focus:border-amber-500"
             >
               {VOICE_CATALOG.map((v) => (
                 <option key={v.id} value={v.id} title={v.styleHint}>
@@ -1633,19 +1676,19 @@ export function ChatView({
                 } catch {}
               }}
               title={autoSpeak ? "Auto-Speak enabled (Jarvis reads replies aloud)" : "Auto-Speak disabled"}
-              className={`flex items-center gap-1.5 rounded-lg border px-2 py-1.5 text-xs font-medium transition sm:px-2.5 ${
+              className={`hidden sm:flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition ${
                 autoSpeak
                   ? "border-amber-500/50 bg-amber-500/15 text-amber-300"
                   : "border-zinc-800 bg-zinc-900 text-zinc-400 hover:text-zinc-200"
               }`}
             >
               <Volume2 className={`h-3.5 w-3.5 ${autoSpeak ? "text-amber-400" : "text-zinc-500"}`} />
-              <span className="hidden sm:inline">{t("chat.autoSpeak")}</span>
+              <span>{t("chat.autoSpeak")}</span>
             </button>
 
-            <span className="flex items-center gap-1.5 text-xs text-zinc-400" title={wsConnected ? t("status.wsConnected") : t("status.wsReconnecting")}>
+            <span className="hidden sm:flex items-center gap-1.5 text-xs text-zinc-400" title={wsConnected ? t("status.wsConnected") : t("status.wsReconnecting")}>
               <span className={`h-2 w-2 rounded-full ${wsConnected ? "bg-emerald-400" : "bg-amber-400"}`} />
-              <span className="hidden sm:inline">{wsConnected ? t("status.wsConnected") : t("status.wsReconnecting")}</span>
+              <span>{wsConnected ? t("status.wsConnected") : t("status.wsReconnecting")}</span>
             </span>
           </div>
         </header>
@@ -2120,7 +2163,7 @@ export function ChatView({
             </div>
           )}
 
-          <div className="mx-auto flex max-w-3xl flex-wrap items-end gap-2 sm:flex-nowrap">
+          <div className="mx-auto grid w-full max-w-3xl grid-cols-5 items-center gap-1.5 sm:flex sm:items-end sm:gap-2">
             {/* Hidden native file input */}
             <input
               ref={fileInputRef}
@@ -2131,16 +2174,16 @@ export function ChatView({
               onChange={handleFileInputChange}
             />
 
-            {/* Left Action Buttons (row 1 left on mobile, left of textarea on desktop) */}
-            <div className="order-1 flex items-center gap-1.5 sm:gap-2">
+            {/* Left Action Buttons (4 equal cells on mobile, inline flex on desktop) */}
+            <div className="contents sm:order-1 sm:flex sm:items-center sm:gap-2">
               {/* Plus / Attach Files Button */}
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
                 title={t("chat.attachFiles")}
-                className="relative flex h-9 w-9 sm:h-11 sm:w-11 shrink-0 items-center justify-center rounded-xl border border-zinc-800 bg-zinc-900 text-zinc-300 transition hover:border-amber-500 hover:text-amber-400 hover:bg-zinc-800 active:scale-95"
+                className="relative flex h-10 w-full sm:h-11 sm:w-11 shrink-0 items-center justify-center rounded-xl border border-zinc-800 bg-zinc-900 text-zinc-300 transition hover:border-amber-500 hover:text-amber-400 hover:bg-zinc-800 active:scale-95"
               >
-                <Plus className="h-4 w-4 sm:h-5 sm:w-5" />
+                <Plus className="h-5 w-5" />
                 {attachedFiles.length > 0 && (
                   <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-amber-500 text-[10px] font-bold text-zinc-950">
                     {attachedFiles.length}
@@ -2153,7 +2196,7 @@ export function ChatView({
                 type="button"
                 onClick={handleMicToggle}
                 title={listening ? t("chat.micStop") : t("chat.micStart")}
-                className={`relative flex h-9 w-9 sm:h-11 sm:w-11 shrink-0 items-center justify-center rounded-xl border transition active:scale-95 ${
+                className={`relative flex h-10 w-full sm:h-11 sm:w-11 shrink-0 items-center justify-center rounded-xl border transition active:scale-95 ${
                   listening && !qaMode
                     ? "border-rose-500 bg-rose-500/20 text-rose-300 shadow-lg shadow-rose-500/20"
                     : "border-zinc-800 bg-zinc-900 text-zinc-300 hover:border-amber-500 hover:text-amber-400"
@@ -2165,7 +2208,7 @@ export function ChatView({
                     <MicOff className="relative h-4 w-4 text-rose-400" />
                   </span>
                 ) : (
-                  <Mic className="h-4 w-4 sm:h-5 sm:w-5" />
+                  <Mic className="h-5 w-5" />
                 )}
               </button>
 
@@ -2180,7 +2223,7 @@ export function ChatView({
                     ? "Gemini Live: голосовой диалог в реальном времени"
                     : "Голосовой режим Вопрос-Ответ с Jarvis"
                 }
-                className={`relative flex h-9 w-9 sm:h-11 sm:w-11 shrink-0 items-center justify-center rounded-xl border transition active:scale-95 ${
+                className={`relative flex h-10 w-full sm:h-11 sm:w-11 shrink-0 items-center justify-center rounded-xl border transition active:scale-95 ${
                   qaMode || geminiLive.liveState !== "off"
                     ? "border-emerald-500 bg-emerald-500/20 text-emerald-300 shadow-lg shadow-emerald-500/20"
                     : "border-zinc-800 bg-zinc-900 text-zinc-300 hover:border-emerald-500/60 hover:text-emerald-400"
@@ -2192,7 +2235,7 @@ export function ChatView({
                     <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-400" />
                   </span>
                 )}
-                <AudioLines className="h-4 w-4 sm:h-5 sm:w-5" />
+                <AudioLines className="h-5 w-5" />
               </button>
 
               {/* Wake Word Standby Button */}
@@ -2200,7 +2243,7 @@ export function ChatView({
                 type="button"
                 onClick={handleWakeToggle}
                 title={wakeMode ? `Выключить ожидание фразы «${wakeWord}»` : `Активация по кодовой фразе «${wakeWord}»`}
-                className={`relative flex h-9 w-9 sm:h-11 sm:w-11 shrink-0 items-center justify-center rounded-xl border transition active:scale-95 ${
+                className={`relative flex h-10 w-full sm:h-11 sm:w-11 shrink-0 items-center justify-center rounded-xl border transition active:scale-95 ${
                   wakeMode
                     ? "border-amber-500 bg-amber-500/20 text-amber-300 shadow-lg shadow-amber-500/20"
                     : "border-zinc-800 bg-zinc-900 text-zinc-300 hover:border-amber-500/60 hover:text-amber-400"
@@ -2211,11 +2254,11 @@ export function ChatView({
                     <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-amber-400" />
                   </span>
                 )}
-                <Ear className="h-4 w-4 sm:h-5 sm:w-5" />
+                <Ear className="h-5 w-5" />
               </button>
             </div>
 
-            {/* Input Textarea (full width row below buttons on mobile, flex-1 middle on desktop) */}
+            {/* Input Textarea (full 5-col width row 2 on mobile, flex-1 middle on desktop) */}
             <textarea
               rows={2}
               value={draft}
@@ -2228,27 +2271,29 @@ export function ChatView({
                 }
               }}
               placeholder={t("chat.placeholder")}
-              className="order-3 w-full sm:order-2 sm:w-auto sm:min-w-0 sm:flex-1 resize-none rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 sm:px-3.5 sm:py-2.5 text-base sm:text-sm text-zinc-100 outline-none focus:border-amber-500"
+              className="col-span-5 order-last w-full sm:order-2 sm:w-auto sm:min-w-0 sm:flex-1 resize-none rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 sm:px-3.5 sm:py-2.5 text-base sm:text-sm text-zinc-100 outline-none focus:border-amber-500"
             />
 
-            {/* Send or Stop Button (row 1 right on mobile, right of textarea on desktop) */}
-            <div className="order-2 ml-auto sm:order-3 sm:ml-0 shrink-0">
+            {/* Send or Stop Button (5th equal cell on mobile, right of textarea on desktop) */}
+            <div className="sm:order-3 shrink-0">
               {activeTurn ? (
                 <button
                   onClick={() => onStop(selectedId)}
-                  className="flex h-9 sm:h-11 shrink-0 items-center gap-1.5 rounded-xl bg-rose-600 px-3 sm:px-4 text-xs sm:text-sm font-medium text-white hover:bg-rose-500"
+                  title={t("chat.stop")}
+                  className="flex h-10 w-full sm:h-11 sm:w-auto shrink-0 items-center justify-center gap-1.5 rounded-xl bg-rose-600 sm:px-4 text-sm font-medium text-white hover:bg-rose-500"
                 >
-                  <Square className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-                  <span>{t("chat.stop")}</span>
+                  <Square className="h-4 w-4 sm:h-4 sm:w-4" />
+                  <span className="hidden sm:inline">{t("chat.stop")}</span>
                 </button>
               ) : (
                 <button
                   onClick={() => void handleSubmit()}
                   disabled={!draft.trim() && attachedFiles.length === 0}
-                  className="flex h-9 sm:h-11 shrink-0 items-center gap-1.5 rounded-xl bg-amber-500 px-3 sm:px-4 text-xs sm:text-sm font-medium text-zinc-950 transition hover:bg-amber-400 disabled:opacity-40"
+                  title={t("chat.send")}
+                  className="flex h-10 w-full sm:h-11 sm:w-auto shrink-0 items-center justify-center gap-1.5 rounded-xl bg-amber-500 sm:px-4 text-sm font-medium text-zinc-950 transition hover:bg-amber-400 disabled:opacity-40"
                 >
-                  <Send className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-                  <span>{t("chat.send")}</span>
+                  <Send className="h-4 w-4 sm:h-4 sm:w-4" />
+                  <span className="hidden sm:inline">{t("chat.send")}</span>
                 </button>
               )}
             </div>
