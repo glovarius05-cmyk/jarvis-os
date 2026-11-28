@@ -1465,126 +1465,118 @@ export function ChatView({
 
       {/* Main Chat Area */}
       <section className="flex min-w-0 flex-1 flex-col bg-zinc-950">
-        {/* Top bar with quick brain/model switcher */}
-        <header className="flex flex-col gap-1.5 border-b border-zinc-800 px-3 py-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-3 sm:px-5 sm:py-3">
-          {/* Mobile row 1 / Desktop left */}
-          <div className="flex w-full min-w-0 items-center gap-1.5 sm:w-auto sm:flex-1 sm:flex-wrap sm:gap-2">
-            {/* Mobile Sessions Drawer & Quick New Chat */}
-            <button
-              type="button"
-              onClick={() => setMobileSessionsOpen(true)}
-              aria-label="История чатов"
-              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-zinc-800 bg-zinc-900 text-zinc-300 hover:border-amber-500/50 md:hidden"
-            >
-              <History className="h-4 w-4" />
-            </button>
-            <button
-              type="button"
-              onClick={() => void handleNewChat()}
-              aria-label={t("chat.new")}
-              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amber-500 text-zinc-950 hover:bg-amber-400 md:hidden"
-            >
-              <Plus className="h-4 w-4" />
-            </button>
-            {/* Unified Model Selector */}
-            <select
-              value={isCustomModel || model === "" ? `__custom__::${provider}` : `${provider}::${model}`}
-              onChange={(e) => {
-                const val = e.target.value;
-                if (val.startsWith("__custom__")) {
-                  const p = val.split("::")[1] || provider;
-                  setProvider(p);
-                  setModel("");
-                } else {
-                  const idx = val.indexOf("::");
-                  if (idx !== -1) {
-                    setProvider(val.slice(0, idx));
-                    setModel(val.slice(idx + 2));
+        {/* Top bar: equal full-width controls on desktop (grid-cols-4), clean 2-row controls on mobile */}
+        <header className="flex flex-col gap-1.5 border-b border-zinc-800 px-3 py-2 md:gap-2 md:px-5 md:py-3">
+          <div className="flex w-full min-w-0 flex-col gap-1.5 md:grid md:grid-cols-4 md:items-center md:gap-2.5">
+            {/* Column 1 (and mobile row 1): History / New on mobile + Model Selector + mobile Auto-Speak */}
+            <div className="flex w-full min-w-0 items-center gap-1.5 md:contents">
+              <button
+                type="button"
+                onClick={() => setMobileSessionsOpen(true)}
+                aria-label="История чатов"
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-zinc-800 bg-zinc-900 text-zinc-300 hover:border-amber-500/50 md:hidden"
+              >
+                <History className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleNewChat()}
+                aria-label={t("chat.new")}
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amber-500 text-zinc-950 hover:bg-amber-400 md:hidden"
+              >
+                <Plus className="h-4 w-4" />
+              </button>
+
+              {/* Unified Model Selector */}
+              <select
+                value={isCustomModel || model === "" ? `__custom__::${provider}` : `${provider}::${model}`}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (val.startsWith("__custom__")) {
+                    const p = val.split("::")[1] || provider;
+                    setProvider(p);
+                    setModel("");
+                  } else {
+                    const idx = val.indexOf("::");
+                    if (idx !== -1) {
+                      setProvider(val.slice(0, idx));
+                      setModel(val.slice(idx + 2));
+                    }
                   }
-                }
-              }}
-              title="Выберите модель ИИ"
-              className="h-9 sm:h-auto min-w-0 flex-1 sm:flex-initial sm:max-w-[340px] truncate rounded-lg border border-zinc-800 bg-zinc-900 px-2.5 py-1.5 font-mono text-xs font-medium text-zinc-100 outline-none transition hover:border-zinc-700 focus:border-amber-500 sm:px-3"
-            >
-              {selectableProviders.map((p) => {
-                const icon =
-                  p.id === "local-llama" ? "🖥️" :
-                  p.id === "openrouter" ? "🌐" :
-                  p.id === "gemini-api" ? "✨" :
-                  p.id === "antigravity-cli" ? "⚡" :
-                  p.id === "codex-cli" ? "💻" :
-                  p.id === "perplexity" ? "🔍" :
-                  p.id === "deepseek" ? "🐋" :
-                  p.id === "moonshot" ? "🌙" :
-                  p.id === "dashscope" ? "👑" : "🤖";
-                const status = p.ready ? "● Готов" : "○ Setup needed";
-                const shortProvider =
-                  p.id === "antigravity-cli" ? "Gemini (Antigravity)" :
-                  p.id === "codex-cli" ? "ChatGPT (Codex)" :
-                  p.id === "gemini-api" ? "Google Gemini" :
-                  p.id === "local-llama" ? "Local Llama" :
-                  p.id === "perplexity" ? "Perplexity" :
-                  p.id === "deepseek" ? "DeepSeek" :
-                  p.id === "moonshot" ? "Kimi" :
-                  p.id === "dashscope" ? "Qwen" :
-                  "OpenRouter";
-                return (
-                  <optgroup key={p.id} label={`${icon} ${p.label} [${status}]`}>
-                    {p.models.map((m) => (
-                      <option key={`${p.id}::${m}`} value={`${p.id}::${m}`}>
-                        {icon} {shortProvider}: {m}
-                      </option>
-                    ))}
-                  </optgroup>
-                );
-              })}
-              <optgroup label="✎ Другое">
-                <option value={`__custom__::${provider}`}>✎ Custom model / Ввести вручную...</option>
-              </optgroup>
-            </select>
+                }}
+                title={activeProviderSpec?.detail || "Выберите модель ИИ"}
+                className="h-9 min-w-0 flex-1 md:w-full truncate rounded-lg border border-zinc-800 bg-zinc-900 px-2.5 font-mono text-xs font-medium text-zinc-100 outline-none transition hover:border-zinc-700 focus:border-amber-500"
+              >
+                {selectableProviders.map((p) => {
+                  const icon =
+                    p.id === "local-llama" ? "🖥️" :
+                    p.id === "openrouter" ? "🌐" :
+                    p.id === "gemini-api" ? "✨" :
+                    p.id === "antigravity-cli" ? "⚡" :
+                    p.id === "codex-cli" ? "💻" :
+                    p.id === "perplexity" ? "🔍" :
+                    p.id === "deepseek" ? "🐋" :
+                    p.id === "moonshot" ? "🌙" :
+                    p.id === "dashscope" ? "👑" : "🤖";
+                  const status = p.ready ? "● Готов" : "○ Setup needed";
+                  const shortProvider =
+                    p.id === "antigravity-cli" ? "Gemini (Antigravity)" :
+                    p.id === "codex-cli" ? "ChatGPT (Codex)" :
+                    p.id === "gemini-api" ? "Google Gemini" :
+                    p.id === "local-llama" ? "Local Llama" :
+                    p.id === "perplexity" ? "Perplexity" :
+                    p.id === "deepseek" ? "DeepSeek" :
+                    p.id === "moonshot" ? "Kimi" :
+                    p.id === "dashscope" ? "Qwen" :
+                    "OpenRouter";
+                  return (
+                    <optgroup key={p.id} label={`${icon} ${p.label} [${status}]`}>
+                      {p.models.map((m) => (
+                        <option key={`${p.id}::${m}`} value={`${p.id}::${m}`}>
+                          {icon} {shortProvider}: {m}
+                        </option>
+                      ))}
+                    </optgroup>
+                  );
+                })}
+                <optgroup label="✎ Другое">
+                  <option value={`__custom__::${provider}`}>✎ Custom model / Ввести вручную...</option>
+                </optgroup>
+              </select>
 
-            {/* Active Provider Status Badge (desktop only) */}
-            <span
-              className={`hidden sm:inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium ${
-                activeProviderSpec?.ready
-                  ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
-                  : "border-zinc-800 bg-zinc-900 text-zinc-400"
-              }`}
-              title={activeProviderSpec?.detail || (activeProviderSpec?.ready ? "Ready" : "Setup needed")}
-            >
-              <span className={`h-1.5 w-1.5 rounded-full ${activeProviderSpec?.ready ? "bg-emerald-400" : "bg-zinc-500"}`} />
-              <span className="max-w-[130px] truncate">{activeProviderSpec?.label.split(" ")[0] ?? provider}</span>
-            </span>
-
-            {(isCustomModel || model === "") && (
-              <div className="flex items-center gap-1.5">
-                <input
-                  type="text"
-                  value={model}
-                  onChange={(e) => setModel(e.target.value)}
-                  placeholder="vendor/model-name:free"
-                  className="w-36 sm:w-56 rounded-lg border border-amber-500/50 bg-zinc-950 px-2.5 py-1.5 font-mono text-xs text-zinc-100 outline-none focus:border-amber-500"
+              {/* Mobile compact Auto-Speak + WS status indicator */}
+              <button
+                type="button"
+                onClick={() => {
+                  const next = !autoSpeak;
+                  setAutoSpeak(next);
+                  try {
+                    localStorage.setItem("jarvis_chat_auto_speak", String(next));
+                  } catch {}
+                }}
+                title={autoSpeak ? "Auto-Speak enabled" : "Auto-Speak disabled"}
+                className={`relative inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border transition md:hidden ${
+                  autoSpeak
+                    ? "border-amber-500/50 bg-amber-500/15 text-amber-300"
+                    : "border-zinc-800 bg-zinc-900 text-zinc-400"
+                }`}
+              >
+                <Volume2 className={`h-4 w-4 ${autoSpeak ? "text-amber-400" : "text-zinc-500"}`} />
+                <span
+                  className={`absolute top-1 right-1 h-1.5 w-1.5 rounded-full ${
+                    wsConnected ? "bg-emerald-400" : "bg-amber-400"
+                  }`}
                 />
-                <select
-                  value={provider}
-                  onChange={(e) => setProvider(e.target.value)}
-                  className="hidden sm:block rounded-lg border border-zinc-800 bg-zinc-900 px-2 py-1.5 text-xs text-zinc-300 outline-none focus:border-amber-500"
-                >
-                  {selectableProviders.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
+              </button>
+            </div>
 
-            <div className="hidden sm:block">
+            {/* Columns 2-3 on desktop / row 2 on mobile (50/50 equal width) */}
+            <div className="grid w-full grid-cols-2 gap-1.5 md:contents">
               <select
                 value={runMode}
                 onChange={(e) => setRunMode(e.target.value as "suggest" | "auto" | "full" | "consensus" | "debate")}
                 title="Режим работы и координации моделей"
-                className={`rounded-lg border px-2.5 py-1.5 text-xs font-medium outline-none transition ${
+                className={`h-9 w-full truncate rounded-lg border px-2.5 text-xs font-medium outline-none transition ${
                   runMode === "consensus"
                     ? "border-emerald-500/50 bg-emerald-950/40 text-emerald-300"
                     : runMode === "debate"
@@ -1592,15 +1584,39 @@ export function ChatView({
                     : "border-zinc-800 bg-zinc-900 text-amber-300 focus:border-amber-500"
                 }`}
               >
-                <option value="full">Mode: ⚡ full (MCP tools)</option>
-                <option value="auto">Mode: 🛡️ auto (safe)</option>
-                <option value="suggest">Mode: 👁️ suggest (readonly)</option>
-                <option value="consensus">Mode: 🤝 Consensus (Multi-AI)</option>
-                <option value="debate">Mode: ⚔️ Debate (Multi-AI)</option>
+                <option value="full">⚡ Режим: Full (MCP)</option>
+                <option value="auto">🛡️ Режим: Auto (Safe)</option>
+                <option value="suggest">👁️ Режим: Suggest</option>
+                <option value="consensus">🤝 Consensus (Multi-AI)</option>
+                <option value="debate">⚔️ Debate (Multi-AI)</option>
+              </select>
+
+              <select
+                value={selectedVoice}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setSelectedVoice(v);
+                  selectedVoiceRef.current = v;
+                  try {
+                    localStorage.setItem("jarvis_selected_voice", v);
+                  } catch {}
+                  void api.patchSettings({ voice: { tts_voice: v } }).catch(() => {});
+                  if (geminiLive.liveState !== "off") {
+                    void geminiLive.startLive(selectedIdRef.current || undefined, v);
+                  }
+                }}
+                title="Голос Jarvis (работает и в Gemini Live, и в обычной озвучке)"
+                className="h-9 w-full truncate rounded-lg border border-zinc-800 bg-zinc-900 px-2.5 text-xs font-medium text-zinc-200 outline-none transition hover:border-zinc-700 focus:border-amber-500"
+              >
+                {VOICE_CATALOG.map((v) => (
+                  <option key={v.id} value={v.id} title={v.styleHint}>
+                    🎙️ {v.label}
+                  </option>
+                ))}
               </select>
             </div>
 
-            {/* Mobile inline Auto-Speak + WS status */}
+            {/* Column 4 on desktop: equal-width Auto-Speak button with live WS dot */}
             <button
               type="button"
               onClick={() => {
@@ -1610,87 +1626,49 @@ export function ChatView({
                   localStorage.setItem("jarvis_chat_auto_speak", String(next));
                 } catch {}
               }}
-              title={autoSpeak ? "Auto-Speak enabled" : "Auto-Speak disabled"}
-              className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border transition sm:hidden ${
+              title={
+                (autoSpeak ? "Auto-Speak enabled" : "Auto-Speak disabled") +
+                ` · ${wsConnected ? t("status.wsConnected") : t("status.wsReconnecting")}`
+              }
+              className={`hidden md:flex h-9 w-full items-center justify-between gap-2 rounded-lg border px-3 text-xs font-medium transition ${
                 autoSpeak
                   ? "border-amber-500/50 bg-amber-500/15 text-amber-300"
-                  : "border-zinc-800 bg-zinc-900 text-zinc-400"
+                  : "border-zinc-800 bg-zinc-900 text-zinc-300 hover:border-zinc-700 hover:text-zinc-100"
               }`}
             >
-              <Volume2 className={`h-4 w-4 ${autoSpeak ? "text-amber-400" : "text-zinc-500"}`} />
+              <span className="flex items-center gap-1.5 truncate">
+                <Volume2 className={`h-3.5 w-3.5 shrink-0 ${autoSpeak ? "text-amber-400" : "text-zinc-400"}`} />
+                <span className="truncate">{t("chat.autoSpeak")}</span>
+              </span>
+              <span
+                className={`h-2 w-2 shrink-0 rounded-full ${wsConnected ? "bg-emerald-400" : "bg-amber-400"}`}
+                title={wsConnected ? t("status.wsConnected") : t("status.wsReconnecting")}
+              />
             </button>
           </div>
 
-          {/* Mobile row 2 (equal 50/50 full-width controls) / Desktop right */}
-          <div className="grid w-full grid-cols-2 gap-1.5 sm:flex sm:w-auto sm:items-center sm:gap-3">
-            <select
-              value={runMode}
-              onChange={(e) => setRunMode(e.target.value as "suggest" | "auto" | "full" | "consensus" | "debate")}
-              title="Режим работы и координации моделей"
-              className={`h-9 w-full truncate rounded-lg border px-2.5 py-1.5 text-xs font-medium outline-none transition sm:hidden ${
-                runMode === "consensus"
-                  ? "border-emerald-500/50 bg-emerald-950/40 text-emerald-300"
-                  : runMode === "debate"
-                  ? "border-purple-500/50 bg-purple-950/40 text-purple-300"
-                  : "border-zinc-800 bg-zinc-900 text-amber-300 focus:border-amber-500"
-              }`}
-            >
-              <option value="full">⚡ full (MCP)</option>
-              <option value="auto">🛡️ auto</option>
-              <option value="suggest">👁️ suggest</option>
-              <option value="consensus">🤝 Consensus</option>
-              <option value="debate">⚔️ Debate</option>
-            </select>
-
-            <select
-              value={selectedVoice}
-              onChange={(e) => {
-                const v = e.target.value;
-                setSelectedVoice(v);
-                selectedVoiceRef.current = v;
-                try {
-                  localStorage.setItem("jarvis_selected_voice", v);
-                } catch {}
-                void api.patchSettings({ voice: { tts_voice: v } }).catch(() => {});
-                if (geminiLive.liveState !== "off") {
-                  void geminiLive.startLive(selectedIdRef.current || undefined, v);
-                }
-              }}
-              title="Голос Jarvis (работает и в Gemini Live, и в обычной озвучке)"
-              className="h-9 sm:h-auto w-full sm:w-auto sm:max-w-[210px] truncate rounded-lg border border-zinc-800 bg-zinc-900 px-2 py-1.5 text-xs font-medium text-zinc-200 outline-none transition hover:border-zinc-700 focus:border-amber-500"
-            >
-              {VOICE_CATALOG.map((v) => (
-                <option key={v.id} value={v.id} title={v.styleHint}>
-                  🎙️ {v.label}
-                </option>
-              ))}
-            </select>
-
-            <button
-              type="button"
-              onClick={() => {
-                const next = !autoSpeak;
-                setAutoSpeak(next);
-                try {
-                  localStorage.setItem("jarvis_chat_auto_speak", String(next));
-                } catch {}
-              }}
-              title={autoSpeak ? "Auto-Speak enabled (Jarvis reads replies aloud)" : "Auto-Speak disabled"}
-              className={`hidden sm:flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition ${
-                autoSpeak
-                  ? "border-amber-500/50 bg-amber-500/15 text-amber-300"
-                  : "border-zinc-800 bg-zinc-900 text-zinc-400 hover:text-zinc-200"
-              }`}
-            >
-              <Volume2 className={`h-3.5 w-3.5 ${autoSpeak ? "text-amber-400" : "text-zinc-500"}`} />
-              <span>{t("chat.autoSpeak")}</span>
-            </button>
-
-            <span className="hidden sm:flex items-center gap-1.5 text-xs text-zinc-400" title={wsConnected ? t("status.wsConnected") : t("status.wsReconnecting")}>
-              <span className={`h-2 w-2 rounded-full ${wsConnected ? "bg-emerald-400" : "bg-amber-400"}`} />
-              <span>{wsConnected ? t("status.wsConnected") : t("status.wsReconnecting")}</span>
-            </span>
-          </div>
+          {(isCustomModel || model === "") && (
+            <div className="flex w-full items-center gap-2">
+              <input
+                type="text"
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                placeholder="vendor/model-name:free"
+                className="h-9 min-w-0 flex-1 rounded-lg border border-amber-500/50 bg-zinc-950 px-2.5 font-mono text-xs text-zinc-100 outline-none focus:border-amber-500"
+              />
+              <select
+                value={provider}
+                onChange={(e) => setProvider(e.target.value)}
+                className="h-9 rounded-lg border border-zinc-800 bg-zinc-900 px-2.5 text-xs text-zinc-300 outline-none focus:border-amber-500"
+              >
+                {selectableProviders.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
         </header>
 
         <div className="flex min-h-0 flex-1 overflow-hidden">
