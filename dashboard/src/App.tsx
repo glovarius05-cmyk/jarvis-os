@@ -299,7 +299,7 @@ export function App() {
             activeBrain={activeBrain}
             providers={providersData?.providers ?? []}
             defaultProvider={status?.model.main_provider ?? "openrouter"}
-            defaultModel={status?.model.main_model ?? "openrouter/auto"}
+            defaultModel={status?.model.main_model ?? "baidu/ernie-5.5-flash-preview:free"}
             wsConnected={connected}
             liveTurns={liveTurns}
             errors={errors}
@@ -329,7 +329,7 @@ export function App() {
                 created.id,
                 prompt,
                 status?.model.main_provider ?? "openrouter",
-                status?.model.main_model ?? "openrouter/auto",
+                status?.model.main_model ?? "baidu/ernie-5.5-flash-preview:free",
                 "full"
               );
               setChatRefreshTick((n) => n + 1);

@@ -18,7 +18,12 @@ export function ModelsView({ data, onUpdated, t }: ModelsViewProps) {
   const [dashscopeKey, setDashscopeKey] = useState("");
   const [localUrl, setLocalUrl] = useState(data?.local_llama.base_url ?? "http://127.0.0.1:11434/v1");
   const [mainProvider, setMainProvider] = useState(data?.model.main_provider ?? "openrouter");
-  const [mainModel, setMainModel] = useState(data?.model.main_model ?? "openrouter/auto");
+  const [mainModel, setMainModel] = useState(
+    (data?.model.main_provider ?? "openrouter") === "openrouter" &&
+      !(data?.model.main_model ?? "").endsWith(":free")
+      ? "baidu/ernie-5.5-flash-preview:free"
+      : (data?.model.main_model ?? "baidu/ernie-5.5-flash-preview:free")
+  );
   const [auxProvider, setAuxProvider] = useState(data?.model.aux_provider ?? "local-llama");
   const [auxModel, setAuxModel] = useState(data?.model.aux_model ?? "llama3.1:8b");
   const [localProbe, setLocalProbe] = useState<string>("");
@@ -71,11 +76,17 @@ export function ModelsView({ data, onUpdated, t }: ModelsViewProps) {
     }
   };
 
-  const providers = data?.providers ?? [];
-  const mainProviderModels = providers.find((p) => p.id === mainProvider)?.models ?? [];
+  const providers = (data?.providers ?? []).filter(
+    (p) => p.id !== "local-llama" && p.id !== "perplexity"
+  );
+  const rawMainModels = providers.find((p) => p.id === mainProvider)?.models ?? [];
+  const mainProviderModels =
+    mainProvider === "openrouter" ? rawMainModels.filter((m) => m.endsWith(":free")) : rawMainModels;
   const isCustomMain = mainModel !== "" && !mainProviderModels.includes(mainModel);
 
-  const auxProviderModels = providers.find((p) => p.id === auxProvider)?.models ?? [];
+  const rawAuxModels = providers.find((p) => p.id === auxProvider)?.models ?? [];
+  const auxProviderModels =
+    auxProvider === "openrouter" ? rawAuxModels.filter((m) => m.endsWith(":free")) : rawAuxModels;
   const isCustomAux = auxModel !== "" && !auxProviderModels.includes(auxModel);
 
   return (
@@ -130,7 +141,12 @@ export function ModelsView({ data, onUpdated, t }: ModelsViewProps) {
             </label>
             <select
               value={mainProvider}
-              onChange={(e) => setMainProvider(e.target.value)}
+              onChange={(e) => {
+                const next = e.target.value;
+                setMainProvider(next);
+                const spec = providers.find((p) => p.id === next);
+                if (spec?.default_model) setMainModel(spec.default_model);
+              }}
               className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100"
             >
               {providers.map((p) => (

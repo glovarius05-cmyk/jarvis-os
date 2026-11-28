@@ -23,6 +23,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from app import APP_VERSION
 from app.api.deps import get_container
 from app.engines.base import EngineEvent, EngineRequest
+from app.engines.router import PROVIDER_MAP
 from app.security.auth import SESSION_COOKIE_NAME
 
 router = APIRouter(prefix="/v1", tags=["OpenAI Compatible API"])
@@ -89,14 +90,9 @@ async def list_v1_models(request: Request) -> dict[str, Any]:
             }
         )
 
-    # Also list configured provider targets
+    # Also list configured provider targets (OpenRouter strictly :free)
     settings = ctr.settings.load()
-    openrouter_models = [
-        "openrouter/auto",
-        "anthropic/claude-3.5-sonnet",
-        "openai/gpt-4o",
-        "google/gemini-2.0-flash",
-    ]
+    openrouter_models = list(PROVIDER_MAP["openrouter"].suggested_models)
     for om in openrouter_models:
         data.append(
             {

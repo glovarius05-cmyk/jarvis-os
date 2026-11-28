@@ -291,7 +291,11 @@ export function ChatView({
 
   useEffect(() => {
     setProvider(defaultProvider);
-    setModel(defaultModel);
+    if (defaultProvider === "openrouter" && !defaultModel.endsWith(":free")) {
+      setModel("baidu/ernie-5.5-flash-preview:free");
+    } else {
+      setModel(defaultModel);
+    }
   }, [defaultProvider, defaultModel]);
 
   const loadSessions = useCallback(async () => {
