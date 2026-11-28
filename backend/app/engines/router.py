@@ -37,30 +37,19 @@ class ProviderSpec:
 PROVIDER_SPECS: tuple[ProviderSpec, ...] = (
     ProviderSpec(
         id="openrouter",
-        label="OpenRouter (API + Free models)",
+        label="OpenRouter (Free models)",
         kind="api",
         default_model="baidu/ernie-5.5-flash-preview:free",
         suggested_models=(
             "baidu/ernie-5.5-flash-preview:free",
             "deepseek/deepseek-r1:free",
-            "deepseek/deepseek-chat",
-            "deepseek/deepseek-r1",
-            "qwen/qwen-2.5-72b-instruct",
-            "qwen/qwen-2.5-coder-32b-instruct",
             "qwen/qwen-2.5-7b-instruct:free",
-            "perplexity/sonar",
-            "perplexity/sonar-reasoning",
-            "moonshotai/moonshot-v1-32k",
-            "zhipu/glm-4-9b-chat",
-            "minimax/minimax-01",
             "nvidia/nemotron-3-ultra-550b-a55b:free",
             "nvidia/nemotron-3.5-lightning:free",
             "google/gemma-4-31b-it:free",
             "google/gemma-4-26b-a4b-it:free",
             "cohere/north-mini-code:free",
             "meta-llama/llama-3.3-70b-instruct:free",
-            "anthropic/claude-3.7-sonnet",
-            "openrouter/auto",
         ),
         key_field="openrouter_api_key",
     ),
@@ -557,8 +546,14 @@ class EngineRouter:
                 ready = bool(cfg.get(spec.key_field))
                 detail = "API key configured" if ready else "API key missing"
                 all_openrouter = list(spec.suggested_models)
-                main_model = str((cfg.get("model") or {}).get("main_model") or "").strip()
-                if main_model and main_model not in all_openrouter:
+                model_cfg = cfg.get("model") or {}
+                main_provider = str(model_cfg.get("main_provider") or "").strip()
+                main_model = str(model_cfg.get("main_model") or "").strip()
+                if (
+                    main_provider == "openrouter"
+                    and main_model.endswith(":free")
+                    and main_model not in all_openrouter
+                ):
                     all_openrouter.insert(0, main_model)
                 models = all_openrouter
             elif spec.kind == "api":

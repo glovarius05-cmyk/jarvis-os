@@ -25,6 +25,10 @@ def test_provider_specs_registered() -> None:
         assert len(spec.suggested_models) > 0
         assert spec.key_field.endswith("_api_key")
 
+    or_spec = PROVIDER_MAP["openrouter"]
+    assert len(or_spec.suggested_models) > 0
+    assert all(m.endswith(":free") for m in or_spec.suggested_models)
+
 
 def test_router_builds_new_engines(tmp_path: Path) -> None:
     sec = SecretStore(tmp_path / "secrets")

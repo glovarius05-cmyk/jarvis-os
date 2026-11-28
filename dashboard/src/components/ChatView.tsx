@@ -1529,9 +1529,11 @@ export function ChatView({
                     p.id === "moonshot" ? "Kimi" :
                     p.id === "dashscope" ? "Qwen" :
                     "OpenRouter";
+                  const visibleModels =
+                    p.id === "openrouter" ? p.models.filter((m) => m.endsWith(":free")) : p.models;
                   return (
                     <optgroup key={p.id} label={`${icon} ${p.label} [${status}]`}>
-                      {p.models.map((m) => (
+                      {visibleModels.map((m) => (
                         <option key={`${p.id}::${m}`} value={`${p.id}::${m}`}>
                           {icon} {shortProvider}: {m}
                         </option>
