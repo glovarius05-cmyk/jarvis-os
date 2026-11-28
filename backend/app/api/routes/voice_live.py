@@ -125,15 +125,32 @@ def _build_live_system_instruction(
     if with_tools:
         parts.extend(
             [
-                "Если вопрос касается актуальных событий, новостей, курсов, погоды или информации на сегодня - ОБЯЗАТЕЛЬНО вызови web_search / web_fetch / jarvis_browser_navigate / jarvis_browser_task.",
+                "Если вопрос касается актуальных событий, новостей, курсов или информации в сети на сегодня - ОБЯЗАТЕЛЬНО вызови web_search / web_fetch / jarvis_browser_navigate / jarvis_browser_task.",
+                "Для погоды используй jarvis_weather. Для задач Kanban используй jarvis_task (op='list' или op='add').",
+                "Для работы с подключёнными сервисами пользователя через Composio (почта Gmail, Google Calendar, GitHub, Google Drive/Docs/Sheets/Photos, Notion, Slack, Zoom, Stripe, Cloudflare, WhatsApp и др.) ОБЯЗАТЕЛЬНО используй composio_status, composio_gmail, composio_calendar, composio_github, composio_feed, composio_search и composio_action.",
                 "Если пользователь просит записать заметку, идею или найти/прочитать заметки во Втором мозге (Obsidian Vault) - ОБЯЗАТЕЛЬНО вызови vault_write (сохраняй в wiki/notes/<slug>.md), vault_edit, vault_search, vault_read или vault_list.",
-                "КРИТИЧЕСКИ ВАЖНО: Никогда не говори, что заметка записана или поиск выполнен, если ты реально не вызвал инструмент и не получил успешный ответ от него!",
+                "КРИТИЧЕСКИ ВАЖНО: Никогда не говори, что проверил почту/календарь/сервис или записал заметку, если ты реально не вызвал инструмент и не получил результат от него!",
                 "Если пользователь просит закончить или завершить голосовой разговор (например, 'закончим разговор', 'завершить', 'отбой', 'пока'), сразу вызови инструмент end_voice_conversation.",
             ]
         )
+        try:
+            cfg = container.settings.load()
+            connected_apps = cfg.get("composio_connected_apps") or []
+            account_emails = cfg.get("composio_account_emails") or {}
+            has_composio_key = bool(str(cfg.get("composio_api_key") or "").strip())
+            if connected_apps:
+                app_labels = [
+                    f"{a} ({account_emails[a]})" if a in account_emails and account_emails[a] else str(a)
+                    for a in connected_apps
+                ]
+                parts.append(f"Подключённые Composio-сервисы пользователя: {', '.join(app_labels)}.")
+            elif has_composio_key:
+                parts.append("Composio API подключён; при вопросе про сервисы вызови composio_status для проверки аккаунтов.")
+        except Exception:  # noqa: BLE001
+            pass
     else:
         parts.append(
-            "ВНИМАНИЕ: Инструменты (поиск, браузер, запись заметок в Obsidian) в этом сеансе отключены. Честно предупреждай об этом и НИКОГДА не выдумывай, что записал заметку."
+            "ВНИМАНИЕ: Инструменты (поиск, Composio-сервисы, браузер, запись заметок в Obsidian) в этом сеансе отключены. Честно предупреждай об этом и НИКОГДА не выдумывай, что проверил сервис или записал заметку."
         )
     try:
         core_mem = container.core_memory.render(brain)
@@ -249,6 +266,139 @@ def _build_live_tools() -> list[dict[str, Any]]:
                             "new_text": {"type": "STRING", "description": "Replacement text"},
                         },
                         "required": ["path", "old_text", "new_text"],
+                    },
+                },
+                {
+                    "name": "composio_status",
+                    "description": "Check Composio API configuration and list all connected cloud accounts (Gmail, Calendar, GitHub, Notion, Drive, Slack, etc.).",
+                    "parameters": {
+                        "type": "OBJECT",
+                        "properties": {
+                            "filter": {"type": "STRING", "description": "Optional app name filter or empty string"},
+                        },
+                    },
+                },
+                {
+                    "name": "composio_gmail",
+                    "description": "Interact with Gmail via Composio: profile, list/search/read emails, or send an email.",
+                    "parameters": {
+                        "type": "OBJECT",
+                        "properties": {
+                            "action": {
+                                "type": "STRING",
+                                "enum": ["profile", "list", "search", "read", "send"],
+                                "description": "Action to perform in Gmail",
+                            },
+                            "query": {"type": "STRING", "description": "Search query (e.g. is:unread newer_than:1d)"},
+                            "limit": {"type": "INTEGER", "description": "Max emails to retrieve"},
+                            "message_id": {"type": "STRING", "description": "Email message ID for action=read"},
+                            "to": {"type": "STRING", "description": "Recipient email for action=send"},
+                            "subject": {"type": "STRING", "description": "Subject for action=send"},
+                            "body": {"type": "STRING", "description": "Email body for action=send"},
+                        },
+                        "required": ["action"],
+                    },
+                },
+                {
+                    "name": "composio_calendar",
+                    "description": "Interact with Google Calendar via Composio: list upcoming meetings or create a new event.",
+                    "parameters": {
+                        "type": "OBJECT",
+                        "properties": {
+                            "action": {
+                                "type": "STRING",
+                                "enum": ["list", "create"],
+                                "description": "Action: list events or create event",
+                            },
+                            "limit": {"type": "INTEGER", "description": "Max events to return"},
+                            "time_min": {"type": "STRING", "description": "ISO start time filter"},
+                            "summary": {"type": "STRING", "description": "Event title for action=create"},
+                            "start_time": {"type": "STRING", "description": "ISO start time for action=create"},
+                            "end_time": {"type": "STRING", "description": "ISO end time for action=create"},
+                        },
+                        "required": ["action"],
+                    },
+                },
+                {
+                    "name": "composio_github",
+                    "description": "Interact with GitHub via Composio: profile, repos, issues, pulls, create_issue.",
+                    "parameters": {
+                        "type": "OBJECT",
+                        "properties": {
+                            "action": {
+                                "type": "STRING",
+                                "enum": ["profile", "repos", "issues", "pulls", "create_issue"],
+                                "description": "GitHub action",
+                            },
+                            "repo": {"type": "STRING", "description": "Repository in owner/repo format"},
+                            "limit": {"type": "INTEGER", "description": "Max items"},
+                            "title": {"type": "STRING", "description": "Issue title"},
+                            "body": {"type": "STRING", "description": "Issue body"},
+                        },
+                        "required": ["action"],
+                    },
+                },
+                {
+                    "name": "composio_feed",
+                    "description": "Fetch recent items/files/messages from ANY connected Composio app (googledrive, googledocs, googlesheets, googlephotos, notion, slack, zoom, stripe, airtable, cloudflare, whatsapp, huggingface, twitter, linkedin).",
+                    "parameters": {
+                        "type": "OBJECT",
+                        "properties": {
+                            "platform": {"type": "STRING", "description": "Platform slug (e.g. googledrive, notion, slack, stripe, zoom)"},
+                            "limit": {"type": "INTEGER", "description": "Max items to return"},
+                            "query": {"type": "STRING", "description": "Optional search/filter query"},
+                        },
+                        "required": ["platform"],
+                    },
+                },
+                {
+                    "name": "composio_search",
+                    "description": "Discover available Composio actions/tool slugs for a connected app.",
+                    "parameters": {
+                        "type": "OBJECT",
+                        "properties": {
+                            "app": {"type": "STRING", "description": "App slug (e.g. notion, slack, googledrive, stripe)"},
+                            "query": {"type": "STRING", "description": "Keyword for searching actions"},
+                        },
+                        "required": ["app"],
+                    },
+                },
+                {
+                    "name": "composio_action",
+                    "description": "Execute ANY Composio action on a connected app. Use composio_search first if exact action_name is unknown.",
+                    "parameters": {
+                        "type": "OBJECT",
+                        "properties": {
+                            "app": {"type": "STRING", "description": "App slug"},
+                            "action_name": {"type": "STRING", "description": "Exact Composio action slug"},
+                            "arguments_json": {"type": "STRING", "description": "Optional JSON-encoded arguments object string, e.g. '{}'"},
+                        },
+                        "required": ["action_name"],
+                    },
+                },
+                {
+                    "name": "jarvis_weather",
+                    "description": "Get live weather and forecast for any city via Open-Meteo.",
+                    "parameters": {
+                        "type": "OBJECT",
+                        "properties": {
+                            "location": {"type": "STRING", "description": "City name (e.g. Moscow, Minsk, Warsaw)"},
+                            "days": {"type": "INTEGER", "description": "Forecast days (1-7)"},
+                        },
+                        "required": ["location"],
+                    },
+                },
+                {
+                    "name": "jarvis_task",
+                    "description": "Manage autonomous Kanban background tasks (list tasks or add a new background task).",
+                    "parameters": {
+                        "type": "OBJECT",
+                        "properties": {
+                            "op": {"type": "STRING", "enum": ["list", "add"], "description": "Operation: list or add"},
+                            "title": {"type": "STRING", "description": "Task title (for op=add)"},
+                            "description": {"type": "STRING", "description": "Task instructions (for op=add)"},
+                        },
+                        "required": ["op"],
                     },
                 },
                 {
@@ -420,7 +570,16 @@ async def ws_voice_live(websocket: WebSocket) -> None:
                                         continue
                                     fc_id = str(fc.get("id") or "")
                                     fc_name = str(fc.get("name") or "")
-                                    fc_args = fc.get("args") if isinstance(fc.get("args"), dict) else {}
+                                    fc_args = dict(fc.get("args")) if isinstance(fc.get("args"), dict) else {}
+                                    if fc_name == "composio_action" and "arguments_json" in fc_args and "arguments" not in fc_args:
+                                        raw_aj = str(fc_args.pop("arguments_json") or "").strip()
+                                        if raw_aj:
+                                            try:
+                                                parsed_aj = json.loads(raw_aj)
+                                                if isinstance(parsed_aj, dict):
+                                                    fc_args["arguments"] = parsed_aj
+                                            except Exception:  # noqa: BLE001
+                                                fc_args["arguments"] = {}
                                     logger.info("Gemini Live toolCall: %s args=%s", fc_name, fc_args)
                                     if fc_name == "end_voice_conversation":
                                         _flush_transcripts()

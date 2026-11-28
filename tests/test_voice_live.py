@@ -54,6 +54,15 @@ def test_voice_live_tools_and_date_instruction(tmp_path: Path):
     assert "vault_read" in names
     assert "vault_search" in names
     assert "vault_list" in names
+    assert "composio_status" in names
+    assert "composio_gmail" in names
+    assert "composio_calendar" in names
+    assert "composio_github" in names
+    assert "composio_feed" in names
+    assert "composio_search" in names
+    assert "composio_action" in names
+    assert "jarvis_weather" in names
+    assert "jarvis_task" in names
     assert "end_voice_conversation" in names
 
 
@@ -91,9 +100,11 @@ def test_voice_mapping_and_gender_persona(tmp_path: Path):
         brains_dir=tmp_path / "brains",
         force_login=False,
     )
+    ctr.settings.update({"composio_connected_apps": ["gmail", "googlecalendar", "notion"]})
     fem_instr = _build_live_system_instruction(ctr, "Brain Default", voice_name="Aoede", with_tools=True)
     assert "женском роде" in fem_instr
     assert "vault_write" in fem_instr
+    assert "gmail" in fem_instr and "googlecalendar" in fem_instr and "notion" in fem_instr
     no_tools_instr = _build_live_system_instruction(ctr, "Brain Default", voice_name="Aoede", with_tools=False)
     assert "отключены" in no_tools_instr
     male_instr = _build_live_system_instruction(ctr, "Brain Default", voice_name="Charon")
