@@ -239,7 +239,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--mode",
-        default=os.getenv("JARVIS_MODE", "full"),
+        default=os.getenv("JARVIS_MODE") or os.getenv("JARVIS_RUN_MODE") or "full",
         choices=["suggest", "auto", "full"],
         help="Permission mode: suggest (readonly), auto (safe), full (all tools)",
     )

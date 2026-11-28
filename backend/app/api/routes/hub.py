@@ -96,11 +96,12 @@ def get_hub_mcp_config(request: Request, container: AppContainer = Depends(get_c
     bridge_script = str(code_dir / "cli" / "jarvis_mcp_bridge.py")
     token = container.hub.hub_token()
 
+    hub_url = f"http://127.0.0.1:{container.port}/hub/mcp"
     server_config = {
         "command": python_cmd,
         "args": [bridge_script],
         "env": {
-            "JARVIS_HUB_URL": f"http://127.0.0.1:{container.port}/hub/mcp",
+            "JARVIS_HUB_URL": hub_url,
             "JARVIS_HUB_TOKEN": token,
         },
     }
@@ -108,7 +109,7 @@ def get_hub_mcp_config(request: Request, container: AppContainer = Depends(get_c
     return {
         "python_path": python_cmd,
         "bridge_script": bridge_script,
-        "hub_url": f"http://127.0.0.1:{container.port}/hub/mcp",
+        "hub_url": hub_url,
         "has_token": bool(token),
         "cursor_config": {
             "mcpServers": {
@@ -118,6 +119,16 @@ def get_hub_mcp_config(request: Request, container: AppContainer = Depends(get_c
         "claude_desktop_config": {
             "mcpServers": {
                 "jarvis": server_config,
+            }
+        },
+        "antigravity_config": {
+            "mcpServers": {
+                "jarvis": {
+                    "serverUrl": hub_url,
+                    "headers": {
+                        "Authorization": f"Bearer {token}",
+                    },
+                }
             }
         },
     }

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import shutil
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -469,22 +470,30 @@ class EngineRouter:
                 raise ValueError(f"CLI engine '{provider}' requires MCP Hub and VaultManager.")
             active_brain = brain or str(cfg.get("active_brain") or "Brain Default")
             cwd = self._vaults.brain_path(active_brain)
-            cls = CodexCliEngine if provider == "codex-cli" else AntigravityCliEngine
-            binary = "codex" if provider == "codex-cli" else "agy"
             extra_env = {}
             if provider == "codex-cli":
                 openai_key = str(cfg.get("openai_api_key") or "").strip()
                 if openai_key:
                     extra_env["OPENAI_API_KEY"] = openai_key
                     extra_env["CODEX_API_KEY"] = openai_key
-            return cls(
-                binary=binary,
+                return CodexCliEngine(
+                    binary="codex",
+                    hub_url=self._hub.hub_url(),
+                    hub_token=self._hub.hub_token(),
+                    cwd=cwd,
+                    run_mode=run_mode,
+                    redact_fn=self._hub.hide_hub_token,
+                    extra_env=extra_env,
+                )
+            return AntigravityCliEngine(
+                binary="agy",
                 hub_url=self._hub.hub_url(),
                 hub_token=self._hub.hub_token(),
                 cwd=cwd,
                 run_mode=run_mode,
                 redact_fn=self._hub.hide_hub_token,
                 extra_env=extra_env,
+                user_mcp_config_path=Path.home() / ".gemini" / "config" / "mcp_config.json",
             )
 
         raise ValueError(f"Unsupported provider: {provider}")
