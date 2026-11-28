@@ -6,8 +6,6 @@ import {
   Brain,
   Calendar,
   Check,
-  ChevronDown,
-  ChevronRight,
   Copy,
   Download,
   Ear,
@@ -31,7 +29,6 @@ import {
   Trash2,
   User,
   Volume2,
-  Wrench,
   X,
 } from "lucide-react";
 import {
@@ -88,54 +85,6 @@ function extractArtifactTitle(content: string): string {
   if (heading?.[1]) return heading[1].trim().slice(0, 60);
   const firstLine = content.split("\n").find((l) => l.trim().length > 0)?.trim() ?? "";
   return firstLine.replace(/[*_`#]/g, "").slice(0, 50) || "Ответ Jarvis";
-}
-
-interface ToolTimelineStep {
-  name: string;
-  argsText: string;
-  resultText: string;
-  status: "running" | "ok" | "error";
-  durationSec?: string;
-}
-
-function buildToolTimeline(tools: LiveTurnState["tools"]): ToolTimelineStep[] {
-  const steps: ToolTimelineStep[] = [];
-  for (const ev of tools) {
-    const name = ev.tool_name || "tool";
-    if (ev.type === "tool_call") {
-      steps.push({
-        name,
-        argsText: ev.content || "",
-        resultText: "",
-        status: "running",
-        durationSec: ev.timestamp ? String(ev.timestamp) : undefined,
-      });
-    } else if (ev.type === "tool_result") {
-      const resText = ev.content || "";
-      const isErr = /^ERROR:/i.test(resText.trim()) || resText.includes("Permission denied");
-      let target: ToolTimelineStep | undefined;
-      for (let i = steps.length - 1; i >= 0; i--) {
-        if (steps[i].name === name && steps[i].status === "running") {
-          target = steps[i];
-          break;
-        }
-      }
-      if (!target) {
-        target = { name, argsText: "", resultText: resText, status: isErr ? "error" : "ok" };
-        steps.push(target);
-      } else {
-        target.resultText = resText;
-        target.status = isErr ? "error" : "ok";
-        if (target.durationSec && ev.timestamp) {
-          const ms = Math.max(0, ev.timestamp - Number(target.durationSec));
-          target.durationSec = `${(ms / 1000).toFixed(1)}s`;
-        } else {
-          target.durationSec = undefined;
-        }
-      }
-    }
-  }
-  return steps.map((s) => (s.status === "running" ? { ...s, durationSec: undefined } : s));
 }
 
 const QUICK_START_PROMPTS = [
@@ -282,8 +231,6 @@ export function ChatView({
   const [copiedId, setCopiedId] = useState<string | number | null>(null);
   const [savingBrainId, setSavingBrainId] = useState<string | number | null>(null);
   const [savedBrainMsg, setSavedBrainMsg] = useState<string | null>(null);
-  const [expandedTools, setExpandedTools] = useState<Record<number, boolean>>({});
-  const [expandedHistoryTools, setExpandedHistoryTools] = useState<Record<string, boolean>>({});
 
   const handleCopyText = useCallback(async (id: string | number, text: string) => {
     try {
@@ -1764,9 +1711,7 @@ export function ChatView({
                       >
                         {!isUser && (
                           <div className="mb-2 flex flex-wrap items-center justify-between gap-2 border-b border-zinc-800/70 pb-1.5 text-[11px] font-mono text-zinc-500">
-                            <span>
-                              {m.provider || "jarvis"} · {m.model || "assistant"}
-                            </span>
+                            <span className="font-sans font-medium text-zinc-400">Jarvis</span>
                             <div className="flex items-center gap-1">
                               <button
                                 type="button"
@@ -1851,52 +1796,6 @@ export function ChatView({
                             </div>
                           </div>
                         )}
-                        {!isUser && Array.isArray(m.meta?.tools) && (m.meta.tools as LiveTurnState["tools"]).length > 0 && (() => {
-                          const steps = buildToolTimeline(m.meta.tools as LiveTurnState["tools"]);
-                          const openKey = `hist_${m.id}`;
-                          const isOpen = Boolean(expandedHistoryTools[openKey]);
-                          return (
-                            <div className="mb-2.5 rounded-xl border border-zinc-800/80 bg-zinc-950/60 text-xs">
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  setExpandedHistoryTools((prev) => ({ ...prev, [openKey]: !prev[openKey] }))
-                                }
-                                className="flex w-full items-center justify-between gap-2 px-2.5 py-1.5 text-left font-mono text-[11px] text-zinc-400 hover:text-zinc-200 transition"
-                              >
-                                <span className="flex items-center gap-1.5">
-                                  <Wrench className="h-3 w-3 text-amber-400" />
-                                  <span>Использовано инструментов: {steps.length}</span>
-                                </span>
-                                {isOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-                              </button>
-                              {isOpen && (
-                                <div className="space-y-1.5 border-t border-zinc-800/70 p-2">
-                                  {steps.map((st, sIdx) => (
-                                    <div key={sIdx} className="rounded-lg border border-zinc-800/60 bg-zinc-900/50 p-2 font-mono text-[10px]">
-                                      <div className="flex items-center justify-between text-zinc-200">
-                                        <span>{st.name}</span>
-                                        <span className={st.status === "error" ? "text-rose-400" : "text-emerald-400"}>
-                                          {st.status === "error" ? "ERR" : "OK"}
-                                        </span>
-                                      </div>
-                                      {st.argsText && (
-                                        <pre className="mt-1 max-h-24 overflow-auto whitespace-pre-wrap break-all text-zinc-400">
-                                          {st.argsText}
-                                        </pre>
-                                      )}
-                                      {st.resultText && (
-                                        <pre className="mt-1 max-h-28 overflow-auto whitespace-pre-wrap break-all border-t border-zinc-800/60 pt-1 text-zinc-300">
-                                          {st.resultText.slice(0, 800)}
-                                        </pre>
-                                      )}
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })()}
                         <MarkdownText content={m.content} />
                       </div>
                       {isUser && (
@@ -1908,93 +1807,20 @@ export function ChatView({
                   );
                 })}
 
-                {/* Live streaming turn with Tool Timeline */}
+                {/* Live streaming turn (clean output only) */}
                 {activeTurn && (
-                  <div className="flex gap-3">
-                    <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-amber-500/15 text-amber-400">
+                  <div className="flex gap-2 sm:gap-3">
+                    <div className="mt-1 hidden h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-amber-500/15 text-amber-400 sm:flex">
                       <Loader2 className="h-4 w-4 animate-spin" />
                     </div>
-                    <div className="max-w-[85%] flex-1 rounded-2xl border border-amber-500/30 bg-zinc-900/80 px-4 py-3">
-                      <div className="mb-2 flex items-center justify-between gap-2 text-[11px] font-mono text-amber-400">
-                        <span>
-                          {activeTurn.provider} · {activeTurn.model}
-                        </span>
-                        {activeTurn.tools.length > 0 && (
-                          <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] text-amber-300">
-                            Шагов инструментов: {buildToolTimeline(activeTurn.tools).length}
-                          </span>
-                        )}
-                      </div>
-                      {activeTurn.tools.length > 0 && (
-                        <div className="mb-3 space-y-1.5 rounded-xl border border-zinc-800/90 bg-zinc-950/70 p-2.5">
-                          {buildToolTimeline(activeTurn.tools).map((step, idx) => {
-                            const isExpanded = Boolean(expandedTools[idx]);
-                            return (
-                              <div key={idx} className="rounded-lg border border-zinc-800/70 bg-zinc-900/60 text-xs">
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    setExpandedTools((prev) => ({ ...prev, [idx]: !prev[idx] }))
-                                  }
-                                  className="flex w-full items-center justify-between gap-2 px-2.5 py-1.5 text-left hover:bg-zinc-800/40 rounded-lg transition"
-                                >
-                                  <span className="flex items-center gap-2 font-mono text-[11px] text-zinc-200">
-                                    {step.status === "running" ? (
-                                      <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-400" />
-                                    ) : step.status === "error" ? (
-                                      <AlertCircle className="h-3.5 w-3.5 text-rose-400" />
-                                    ) : (
-                                      <Check className="h-3.5 w-3.5 text-emerald-400" />
-                                    )}
-                                    <Wrench className="h-3 w-3 text-zinc-500" />
-                                    <span>{step.name}</span>
-                                  </span>
-                                  <span className="flex items-center gap-1.5 font-mono text-[10px] text-zinc-400">
-                                    <span>
-                                      {step.status === "running"
-                                        ? "выполняется..."
-                                        : step.durationSec
-                                        ? `${step.durationSec} · ${step.status === "error" ? "ERR" : "OK"}`
-                                        : step.status === "error"
-                                        ? "ERR"
-                                        : "OK"}
-                                    </span>
-                                    {isExpanded ? (
-                                      <ChevronDown className="h-3 w-3 text-zinc-500" />
-                                    ) : (
-                                      <ChevronRight className="h-3 w-3 text-zinc-500" />
-                                    )}
-                                  </span>
-                                </button>
-                                {isExpanded && (
-                                  <div className="border-t border-zinc-800/70 px-2.5 py-2 space-y-1.5 font-mono text-[10px] text-zinc-400">
-                                    {step.argsText && (
-                                      <div>
-                                        <span className="text-zinc-500">Аргументы:</span>
-                                        <pre className="mt-0.5 max-h-28 overflow-auto whitespace-pre-wrap break-all rounded bg-zinc-950 p-1.5 text-zinc-300">
-                                          {step.argsText}
-                                        </pre>
-                                      </div>
-                                    )}
-                                    {step.resultText && (
-                                      <div>
-                                        <span className="text-zinc-500">Результат:</span>
-                                        <pre className="mt-0.5 max-h-36 overflow-auto whitespace-pre-wrap break-all rounded bg-zinc-950 p-1.5 text-zinc-300">
-                                          {step.resultText.slice(0, 1200)}
-                                        </pre>
-                                      </div>
-                                    )}
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
+                    <div className="max-w-[94%] sm:max-w-[85%] flex-1 rounded-2xl border border-amber-500/30 bg-zinc-900/80 px-3.5 py-2.5 sm:px-4 sm:py-3">
                       {activeTurn.text ? (
                         <MarkdownText content={activeTurn.text} />
                       ) : (
-                        <p className="text-sm text-zinc-400">{t("chat.thinking")}</p>
+                        <p className="flex items-center gap-2 text-sm text-zinc-400">
+                          <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-400 sm:hidden" />
+                          <span>{t("chat.thinking")}</span>
+                        </p>
                       )}
                     </div>
                   </div>
@@ -2189,9 +2015,9 @@ export function ChatView({
                     : geminiLive.liveState === "connecting"
                     ? "Gemini Live: подключение..."
                     : geminiLive.liveState === "listening"
-                    ? `Gemini Live: слушаю...${!geminiLive.toolsEnabled ? " (⚠️ без инструментов)" : geminiLive.lastToolAction ? ` · ${geminiLive.lastToolAction}` : ""}`
+                    ? `Gemini Live: слушаю...${!geminiLive.toolsEnabled ? " (⚠️ без инструментов)" : ""}`
                     : geminiLive.liveState === "speaking"
-                    ? `Gemini Live: Jarvis отвечает...${geminiLive.lastToolAction ? ` · ${geminiLive.lastToolAction}` : ""}`
+                    ? "Gemini Live: Jarvis отвечает..."
                     : qaStatus === "listening"
                     ? "Режим Вопрос-Ответ: слушаю вас..."
                     : qaStatus === "thinking"
