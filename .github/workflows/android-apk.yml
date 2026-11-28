@@ -1,0 +1,81 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "mobile/**"
+      - ".github/workflows/android-apk.yml"
+
+jobs:
+  android-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: "mobile/package-lock.json"
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install mobile dependencies
+        working-directory: mobile
+        run: npm ci
+
+      - name: Generate Android Gradle project
+        working-directory: mobile
+        run: npx expo prebuild --platform android --no-install
+
+      - name: Build Android Release APK
+        working-directory: mobile/android
+        run: ./gradlew assembleRelease --no-daemon
+
+      - name: Ensure APK is signed for direct installation
+        run: |
+          set -euo pipefail
+          OUT_DIR="mobile/android/app/build/outputs/apk/release"
+          mkdir -p dist-apk
+          RAW_APK="$(find "$OUT_DIR" -maxdepth 1 -name '*.apk' | head -n 1)"
+          if [ -z "$RAW_APK" ]; then
+            echo "No APK produced in $OUT_DIR" >&2
+            exit 1
+          fi
+          BT_DIR="$(ls -d "${ANDROID_HOME:-$ANDROID_SDK_ROOT}/build-tools/"* | sort -V | tail -n 1)"
+          if "$BT_DIR/apksigner" verify "$RAW_APK" >/dev/null 2>&1; then
+            cp "$RAW_APK" dist-apk/jarvis-os-android.apk
+          else
+            KEYSTORE="$HOME/.android/debug.keystore"
+            mkdir -p "$HOME/.android"
+            if [ ! -f "$KEYSTORE" ]; then
+              keytool -genkeypair -v -keystore "$KEYSTORE" -storepass android \
+                -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 \
+                -validity 10000 -dname "CN=Jarvis OS,O=JarvisOS,C=US"
+            fi
+            "$BT_DIR/zipalign" -f -p 4 "$RAW_APK" dist-apk/aligned.apk
+            "$BT_DIR/apksigner" sign --ks "$KEYSTORE" --ks-pass pass:android \
+              --key-pass pass:android --out dist-apk/jarvis-os-android.apk dist-apk/aligned.apk
+            rm -f dist-apk/aligned.apk
+          fi
+
+      - name: Upload Android APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: jarvis-os-android-apk
+          path: dist-apk/jarvis-os-android.apk
+          retention-days: 30

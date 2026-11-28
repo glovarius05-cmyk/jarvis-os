@@ -43,7 +43,8 @@
         {
           "microphonePermission": "Jarvis OS использует микрофон для голосовых команд и режима Gemini Live."
         }
-      ]
+      ],
+      "./plugins/withCleartextTraffic"
     ],
     "web": {
       "favicon": "./assets/favicon.png"
