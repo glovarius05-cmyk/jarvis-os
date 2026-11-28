@@ -57,7 +57,8 @@ def test_csrf_and_host_rebinding_protection(client: TestClient) -> None:
     assert r.status_code == 403
 
 
-def test_public_bind_forces_authentication_flow(tmp_path: Path, project_root: Path) -> None:
+def test_public_bind_forces_authentication_flow(tmp_path: Path, project_root: Path, monkeypatch) -> None:
+    monkeypatch.delenv("JARVIS_REQUIRE_LOGIN", raising=False)
     public_container = AppContainer.build(
         code_dir=project_root,
         state_dir=tmp_path / "state",
@@ -138,3 +139,43 @@ def test_chat_file_upload_and_raw_endpoint(client: TestClient) -> None:
     r_reset = client.post("/api/hub/agensi/reset")
     assert r_reset.status_code == 200
     assert r_reset.json()["ok"] is True
+
+
+def test_bearer_token_auth_for_mobile_clients(tmp_path: Path, project_root: Path) -> None:
+    protected = AppContainer.build(
+        code_dir=project_root,
+        state_dir=tmp_path / "state",
+        brains_dir=tmp_path / "brains",
+        host="127.0.0.1",
+        port=7777,
+        force_login=True,
+    )
+    app = create_app(protected)
+    with TestClient(app) as tc:
+        r_setup = tc.post("/api/auth/setup", json={"username": "mobile", "password": "strong-password-123"})
+        assert r_setup.status_code == 200
+        tok = r_setup.json()["token"]
+        assert tok
+
+        # Use an isolated client without browser cookies to mimic a native mobile client
+        with TestClient(app) as mobile_tc:
+            assert mobile_tc.get("/api/settings").status_code == 401
+
+            headers = {"Authorization": f"Bearer {tok}"}
+            assert mobile_tc.get("/api/settings", headers=headers).status_code == 200
+            assert mobile_tc.get("/api/auth/status", headers=headers).json()["authenticated"] is True
+
+            # Bearer-authenticated POST succeeds even if an external Origin header is present
+            r_sess = mobile_tc.post(
+                "/api/sessions",
+                json={"title": "Mobile session"},
+                headers={**headers, "Origin": "https://expo.dev"},
+            )
+            assert r_sess.status_code == 200
+
+            with mobile_tc.websocket_connect(f"/ws/chat?token={tok}") as ws:
+                hello = ws.receive_json()
+                assert hello["type"] == "hello"
+
+            assert mobile_tc.post("/api/auth/logout", headers=headers).status_code == 200
+            assert mobile_tc.get("/api/settings", headers=headers).status_code == 401

@@ -16,6 +16,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Mapping
 
 from app.security.totp import generate_totp_secret, provisioning_uri, verify_totp
 
@@ -24,6 +25,33 @@ SESSION_TTL_SECONDS = 30 * 24 * 3600
 MIN_PASSWORD_LENGTH = 8
 MAX_LOGIN_ATTEMPTS = 8
 RATE_WINDOW_SECONDS = 300
+
+
+def extract_bearer_token(auth_header: str | None) -> str | None:
+    """Parse an Authorization: Bearer <token> header value safely."""
+    if not auth_header:
+        return None
+    parts = auth_header.strip().split(" ", 1)
+    if len(parts) == 2 and parts[0].lower() == "bearer":
+        tok = parts[1].strip()
+        return tok or None
+    return None
+
+
+def extract_request_session_token(
+    headers: Mapping[str, str],
+    cookies: Mapping[str, str],
+    query_params: Mapping[str, str] | None = None,
+) -> str | None:
+    """Resolve session token from Bearer header, optional WS query param, or cookie."""
+    bearer = extract_bearer_token(headers.get("authorization"))
+    if bearer:
+        return bearer
+    if query_params is not None:
+        qtok = (query_params.get("token") or "").strip()
+        if qtok:
+            return qtok
+    return cookies.get(SESSION_COOKIE_NAME)
 
 
 def _hash_password(password: str, salt: bytes | None = None) -> str:

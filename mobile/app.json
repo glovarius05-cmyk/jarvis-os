@@ -1,0 +1,52 @@
+{
+  "expo": {
+    "name": "Jarvis OS",
+    "slug": "jarvis-os-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#09090b",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#09090b"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.jarvisos.mobile",
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "Jarvis OS использует микрофон для голосовых команд и режима Gemini Live.",
+        "NSPhotoLibraryUsageDescription": "Jarvis OS прикрепляет выбранные фото к сообщениям чата.",
+        "NSCameraUsageDescription": "Jarvis OS позволяет фотографировать документы и отправлять их в чат."
+      }
+    },
+    "android": {
+      "package": "com.jarvisos.mobile",
+      "adaptiveIcon": {
+        "backgroundColor": "#09090b",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.CAMERA",
+        "android.permission.READ_MEDIA_IMAGES"
+      ],
+      "predictiveBackGestureEnabled": false
+    },
+    "plugins": [
+      "expo-secure-store",
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Jarvis OS использует микрофон для голосовых команд и режима Gemini Live."
+        }
+      ]
+    ],
+    "web": {
+      "favicon": "./assets/favicon.png"
+    }
+  }
+}

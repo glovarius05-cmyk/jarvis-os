@@ -8,7 +8,11 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from app.security.auth import AuthManager, SESSION_COOKIE_NAME
+from app.security.auth import (
+    AuthManager,
+    extract_bearer_token,
+    extract_request_session_token,
+)
 
 STATE_CHANGING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
@@ -46,8 +50,14 @@ class SecurityMiddleware(BaseHTTPMiddleware):
             if host_header and host_header not in self._allowed_hosts and host_no_port not in self._allowed_hosts:
                 return JSONResponse({"detail": "Host not allowed"}, status_code=403)
 
-        # 2. CSRF / Origin check on state-changing requests (skip token-authenticated /hooks/, /hub/mcp, and /v1/)
-        if request.method in STATE_CHANGING_METHODS and not path.startswith(("/hooks/", "/hub/mcp", "/v1/")):
+        # 2. CSRF / Origin check on state-changing requests (skip token-authenticated /hooks/, /hub/mcp, /v1/, and valid Bearer auth)
+        bearer_tok = extract_bearer_token(request.headers.get("authorization"))
+        bearer_ok = bool(bearer_tok and self._auth.validate_session(bearer_tok))
+        if (
+            request.method in STATE_CHANGING_METHODS
+            and not bearer_ok
+            and not path.startswith(("/hooks/", "/hub/mcp", "/v1/"))
+        ):
             if "*" not in self._allowed_hosts:
                 origin = request.headers.get("origin")
                 referer = request.headers.get("referer")
@@ -60,7 +70,7 @@ class SecurityMiddleware(BaseHTTPMiddleware):
         # 3. Authentication gate for /api/* routes (except health/auth endpoints)
         if path.startswith("/api/") and not path.startswith(AUTH_EXEMPT_PREFIXES):
             if self._auth.login_required():
-                token = request.cookies.get(SESSION_COOKIE_NAME)
+                token = extract_request_session_token(request.headers, request.cookies)
                 if not self._auth.validate_session(token):
                     return JSONResponse(
                         {

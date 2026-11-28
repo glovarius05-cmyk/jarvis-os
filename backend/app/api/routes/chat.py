@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 
 from app.api.deps import get_container
 from app.container import AppContainer
-from app.security.auth import SESSION_COOKIE_NAME
+from app.security.auth import extract_request_session_token
 
 router = APIRouter(tags=["chat"])
 
@@ -163,7 +163,11 @@ async def ws_chat(websocket: WebSocket) -> None:
     container: AppContainer = websocket.app.state.container
 
     if container.auth.login_required():
-        token = websocket.cookies.get(SESSION_COOKIE_NAME)
+        token = extract_request_session_token(
+            websocket.headers,
+            websocket.cookies,
+            websocket.query_params,
+        )
         if not container.auth.validate_session(token):
             await websocket.close(code=4401, reason="Authentication required")
             return

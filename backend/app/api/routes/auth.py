@@ -7,7 +7,11 @@ from pydantic import BaseModel, Field
 
 from app.api.deps import get_container
 from app.container import AppContainer
-from app.security.auth import SESSION_COOKIE_NAME, SESSION_TTL_SECONDS
+from app.security.auth import (
+    SESSION_COOKIE_NAME,
+    SESSION_TTL_SECONDS,
+    extract_request_session_token,
+)
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -37,7 +41,7 @@ def _set_session_cookie(response: Response, request: Request, token: str) -> Non
 
 @router.get("/status")
 def auth_status(request: Request, container: AppContainer = Depends(get_container)) -> dict:
-    token = request.cookies.get(SESSION_COOKIE_NAME)
+    token = extract_request_session_token(request.headers, request.cookies)
     st = container.auth.status(token)
     return {
         "login_required": st.login_required,
@@ -60,7 +64,7 @@ def auth_setup(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     _set_session_cookie(response, request, token)
-    return {"ok": True, "username": payload.username.strip()}
+    return {"ok": True, "username": payload.username.strip(), "token": token}
 
 
 @router.post("/login")
@@ -83,7 +87,7 @@ def auth_login(
     except PermissionError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
     _set_session_cookie(response, request, token)
-    return {"ok": True, "username": payload.username.strip()}
+    return {"ok": True, "username": payload.username.strip(), "token": token}
 
 
 @router.post("/logout")
@@ -92,7 +96,7 @@ def auth_logout(
     response: Response,
     container: AppContainer = Depends(get_container),
 ) -> dict:
-    token = request.cookies.get(SESSION_COOKIE_NAME)
+    token = extract_request_session_token(request.headers, request.cookies)
     container.auth.logout(token)
     response.delete_cookie(SESSION_COOKIE_NAME)
     return {"ok": True}
@@ -100,7 +104,7 @@ def auth_logout(
 
 @router.post("/totp/setup")
 def totp_setup(request: Request, container: AppContainer = Depends(get_container)) -> dict:
-    st = container.auth.status(request.cookies.get(SESSION_COOKIE_NAME))
+    st = container.auth.status(extract_request_session_token(request.headers, request.cookies))
     if not st.authenticated:
         raise HTTPException(status_code=401, detail="Authentication required")
     return container.auth.begin_totp_setup()
@@ -112,7 +116,7 @@ def totp_enable(
     request: Request,
     container: AppContainer = Depends(get_container),
 ) -> dict:
-    st = container.auth.status(request.cookies.get(SESSION_COOKIE_NAME))
+    st = container.auth.status(extract_request_session_token(request.headers, request.cookies))
     if not st.authenticated:
         raise HTTPException(status_code=401, detail="Authentication required")
     try:
@@ -126,7 +130,7 @@ def totp_enable(
 
 @router.post("/totp/disable")
 def totp_disable(request: Request, container: AppContainer = Depends(get_container)) -> dict:
-    st = container.auth.status(request.cookies.get(SESSION_COOKIE_NAME))
+    st = container.auth.status(extract_request_session_token(request.headers, request.cookies))
     if not st.authenticated:
         raise HTTPException(status_code=401, detail="Authentication required")
     container.auth.disable_totp()
