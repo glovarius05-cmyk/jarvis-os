@@ -29,6 +29,12 @@ def test_provider_specs_registered() -> None:
     assert len(or_spec.suggested_models) > 0
     assert all(m.endswith(":free") for m in or_spec.suggested_models)
 
+    assert PROVIDER_MAP["gemini-api"].suggested_models == (
+        "gemini-3.8-flash",
+        "gemini-3.5-flash-lite",
+    )
+    assert PROVIDER_MAP["codex-cli"].suggested_models == ("gpt-6-luna-extrahigh",)
+
 
 def test_router_builds_new_engines(tmp_path: Path) -> None:
     sec = SecretStore(tmp_path / "secrets")

@@ -1351,8 +1351,10 @@ export function ChatView({
   };
 
   const activeProviderSpec = providers.find((p) => p.id === provider);
-  const selectableProviders = providers;
-  const allKnownPairs = providers.flatMap((p) => p.models.map((m) => `${p.id}::${m}`));
+  const selectableProviders = providers.filter(
+    (p) => p.id !== "local-llama" && p.id !== "perplexity"
+  );
+  const allKnownPairs = selectableProviders.flatMap((p) => p.models.map((m) => `${p.id}::${m}`));
   const isKnown = allKnownPairs.includes(`${provider}::${model}`);
   const isCustomModel = !isKnown && model !== "";
 
