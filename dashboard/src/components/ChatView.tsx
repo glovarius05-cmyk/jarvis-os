@@ -2120,7 +2120,7 @@ export function ChatView({
             </div>
           )}
 
-          <div className="mx-auto flex max-w-3xl items-end gap-2">
+          <div className="mx-auto flex max-w-3xl flex-wrap items-end gap-2 sm:flex-nowrap">
             {/* Hidden native file input */}
             <input
               ref={fileInputRef}
@@ -2131,88 +2131,91 @@ export function ChatView({
               onChange={handleFileInputChange}
             />
 
-            {/* Plus / Attach Files Button */}
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              title={t("chat.attachFiles")}
-              className="relative flex h-10 w-10 sm:h-11 sm:w-11 shrink-0 items-center justify-center rounded-xl border border-zinc-800 bg-zinc-900 text-zinc-300 transition hover:border-amber-500 hover:text-amber-400 hover:bg-zinc-800 active:scale-95"
-            >
-              <Plus className="h-5 w-5" />
-              {attachedFiles.length > 0 && (
-                <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-amber-500 text-[10px] font-bold text-zinc-950">
-                  {attachedFiles.length}
-                </span>
-              )}
-            </button>
+            {/* Left Action Buttons (row 1 left on mobile, left of textarea on desktop) */}
+            <div className="order-1 flex items-center gap-1.5 sm:gap-2">
+              {/* Plus / Attach Files Button */}
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                title={t("chat.attachFiles")}
+                className="relative flex h-9 w-9 sm:h-11 sm:w-11 shrink-0 items-center justify-center rounded-xl border border-zinc-800 bg-zinc-900 text-zinc-300 transition hover:border-amber-500 hover:text-amber-400 hover:bg-zinc-800 active:scale-95"
+              >
+                <Plus className="h-4 w-4 sm:h-5 sm:w-5" />
+                {attachedFiles.length > 0 && (
+                  <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-amber-500 text-[10px] font-bold text-zinc-950">
+                    {attachedFiles.length}
+                  </span>
+                )}
+              </button>
 
-            {/* Microphone Button for Voice Dictation */}
-            <button
-              type="button"
-              onClick={handleMicToggle}
-              title={listening ? t("chat.micStop") : t("chat.micStart")}
-              className={`relative flex h-10 w-10 sm:h-11 sm:w-11 shrink-0 items-center justify-center rounded-xl border transition active:scale-95 ${
-                listening && !qaMode
-                  ? "border-rose-500 bg-rose-500/20 text-rose-300 shadow-lg shadow-rose-500/20"
-                  : "border-zinc-800 bg-zinc-900 text-zinc-300 hover:border-amber-500 hover:text-amber-400"
-              }`}
-            >
-              {listening && !qaMode ? (
-                <span className="relative flex h-4 w-4 items-center justify-center">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-rose-400 opacity-75" />
-                  <MicOff className="relative h-4 w-4 text-rose-400" />
-                </span>
-              ) : (
-                <Mic className="h-5 w-5" />
-              )}
-            </button>
+              {/* Microphone Button for Voice Dictation */}
+              <button
+                type="button"
+                onClick={handleMicToggle}
+                title={listening ? t("chat.micStop") : t("chat.micStart")}
+                className={`relative flex h-9 w-9 sm:h-11 sm:w-11 shrink-0 items-center justify-center rounded-xl border transition active:scale-95 ${
+                  listening && !qaMode
+                    ? "border-rose-500 bg-rose-500/20 text-rose-300 shadow-lg shadow-rose-500/20"
+                    : "border-zinc-800 bg-zinc-900 text-zinc-300 hover:border-amber-500 hover:text-amber-400"
+                }`}
+              >
+                {listening && !qaMode ? (
+                  <span className="relative flex h-4 w-4 items-center justify-center">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-rose-400 opacity-75" />
+                    <MicOff className="relative h-4 w-4 text-rose-400" />
+                  </span>
+                ) : (
+                  <Mic className="h-4 w-4 sm:h-5 sm:w-5" />
+                )}
+              </button>
 
-            {/* Live Voice Q&A Mode Button */}
-            <button
-              type="button"
-              onClick={() => void handleQaToggle()}
-              title={
-                qaMode || geminiLive.liveState !== "off"
-                  ? "Остановить режим Вопрос-Ответ"
-                  : geminiLive.configured
-                  ? "Gemini Live: голосовой диалог в реальном времени"
-                  : "Голосовой режим Вопрос-Ответ с Jarvis"
-              }
-              className={`relative flex h-10 w-10 sm:h-11 sm:w-11 shrink-0 items-center justify-center rounded-xl border transition active:scale-95 ${
-                qaMode || geminiLive.liveState !== "off"
-                  ? "border-emerald-500 bg-emerald-500/20 text-emerald-300 shadow-lg shadow-emerald-500/20"
-                  : "border-zinc-800 bg-zinc-900 text-zinc-300 hover:border-emerald-500/60 hover:text-emerald-400"
-              }`}
-            >
-              {(qaMode || geminiLive.liveState !== "off") && (
-                <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-                  <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-400" />
-                </span>
-              )}
-              <AudioLines className="h-5 w-5" />
-            </button>
+              {/* Live Voice Q&A Mode Button */}
+              <button
+                type="button"
+                onClick={() => void handleQaToggle()}
+                title={
+                  qaMode || geminiLive.liveState !== "off"
+                    ? "Остановить режим Вопрос-Ответ"
+                    : geminiLive.configured
+                    ? "Gemini Live: голосовой диалог в реальном времени"
+                    : "Голосовой режим Вопрос-Ответ с Jarvis"
+                }
+                className={`relative flex h-9 w-9 sm:h-11 sm:w-11 shrink-0 items-center justify-center rounded-xl border transition active:scale-95 ${
+                  qaMode || geminiLive.liveState !== "off"
+                    ? "border-emerald-500 bg-emerald-500/20 text-emerald-300 shadow-lg shadow-emerald-500/20"
+                    : "border-zinc-800 bg-zinc-900 text-zinc-300 hover:border-emerald-500/60 hover:text-emerald-400"
+                }`}
+              >
+                {(qaMode || geminiLive.liveState !== "off") && (
+                  <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                    <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-400" />
+                  </span>
+                )}
+                <AudioLines className="h-4 w-4 sm:h-5 sm:w-5" />
+              </button>
 
-            {/* Wake Word Standby Button */}
-            <button
-              type="button"
-              onClick={handleWakeToggle}
-              title={wakeMode ? `Выключить ожидание фразы «${wakeWord}»` : `Активация по кодовой фразе «${wakeWord}»`}
-              className={`relative flex h-10 w-10 sm:h-11 sm:w-11 shrink-0 items-center justify-center rounded-xl border transition active:scale-95 ${
-                wakeMode
-                  ? "border-amber-500 bg-amber-500/20 text-amber-300 shadow-lg shadow-amber-500/20"
-                  : "border-zinc-800 bg-zinc-900 text-zinc-300 hover:border-amber-500/60 hover:text-amber-400"
-              }`}
-            >
-              {wakeMode && (
-                <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
-                  <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-amber-400" />
-                </span>
-              )}
-              <Ear className="h-5 w-5" />
-            </button>
+              {/* Wake Word Standby Button */}
+              <button
+                type="button"
+                onClick={handleWakeToggle}
+                title={wakeMode ? `Выключить ожидание фразы «${wakeWord}»` : `Активация по кодовой фразе «${wakeWord}»`}
+                className={`relative flex h-9 w-9 sm:h-11 sm:w-11 shrink-0 items-center justify-center rounded-xl border transition active:scale-95 ${
+                  wakeMode
+                    ? "border-amber-500 bg-amber-500/20 text-amber-300 shadow-lg shadow-amber-500/20"
+                    : "border-zinc-800 bg-zinc-900 text-zinc-300 hover:border-amber-500/60 hover:text-amber-400"
+                }`}
+              >
+                {wakeMode && (
+                  <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
+                    <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-amber-400" />
+                  </span>
+                )}
+                <Ear className="h-4 w-4 sm:h-5 sm:w-5" />
+              </button>
+            </div>
 
-            {/* Input Textarea */}
+            {/* Input Textarea (full width row below buttons on mobile, flex-1 middle on desktop) */}
             <textarea
               rows={2}
               value={draft}
@@ -2225,28 +2228,30 @@ export function ChatView({
                 }
               }}
               placeholder={t("chat.placeholder")}
-              className="min-w-0 flex-1 resize-none rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 sm:px-3.5 sm:py-2.5 text-base sm:text-sm text-zinc-100 outline-none focus:border-amber-500"
+              className="order-3 w-full sm:order-2 sm:w-auto sm:min-w-0 sm:flex-1 resize-none rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 sm:px-3.5 sm:py-2.5 text-base sm:text-sm text-zinc-100 outline-none focus:border-amber-500"
             />
 
-            {/* Send or Stop Button */}
-            {activeTurn ? (
-              <button
-                onClick={() => onStop(selectedId)}
-                className="flex h-10 sm:h-11 shrink-0 items-center gap-1.5 rounded-xl bg-rose-600 px-3 sm:px-4 text-sm font-medium text-white hover:bg-rose-500"
-              >
-                <Square className="h-4 w-4" />
-                <span className="hidden sm:inline">{t("chat.stop")}</span>
-              </button>
-            ) : (
-              <button
-                onClick={() => void handleSubmit()}
-                disabled={!draft.trim() && attachedFiles.length === 0}
-                className="flex h-10 sm:h-11 shrink-0 items-center gap-1.5 rounded-xl bg-amber-500 px-3 sm:px-4 text-sm font-medium text-zinc-950 transition hover:bg-amber-400 disabled:opacity-40"
-              >
-                <Send className="h-4 w-4" />
-                <span className="hidden sm:inline">{t("chat.send")}</span>
-              </button>
-            )}
+            {/* Send or Stop Button (row 1 right on mobile, right of textarea on desktop) */}
+            <div className="order-2 ml-auto sm:order-3 sm:ml-0 shrink-0">
+              {activeTurn ? (
+                <button
+                  onClick={() => onStop(selectedId)}
+                  className="flex h-9 sm:h-11 shrink-0 items-center gap-1.5 rounded-xl bg-rose-600 px-3 sm:px-4 text-xs sm:text-sm font-medium text-white hover:bg-rose-500"
+                >
+                  <Square className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                  <span>{t("chat.stop")}</span>
+                </button>
+              ) : (
+                <button
+                  onClick={() => void handleSubmit()}
+                  disabled={!draft.trim() && attachedFiles.length === 0}
+                  className="flex h-9 sm:h-11 shrink-0 items-center gap-1.5 rounded-xl bg-amber-500 px-3 sm:px-4 text-xs sm:text-sm font-medium text-zinc-950 transition hover:bg-amber-400 disabled:opacity-40"
+                >
+                  <Send className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                  <span>{t("chat.send")}</span>
+                </button>
+              )}
+            </div>
           </div>
         </div>
           </div>
